@@ -6,54 +6,145 @@
 
 set -e
 
-# Colores para el output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 ok()   { echo -e "${GREEN}[OK]${NC} $1"; }
 warn() { echo -e "${YELLOW}[AVISO]${NC} $1"; }
 fail() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+info() { echo -e "${CYAN}[INFO]${NC} $1"; }
+
+preguntar() {
+  local LABEL=$1
+  local VARNAME=$2
+  local VALOR=""
+  while true; do
+    echo ""
+    read -p "  Ingrese $LABEL: " VALOR
+    if [ -z "$VALOR" ]; then
+      warn "El campo no puede estar vacío."
+      continue
+    fi
+    read -p "  Confirme $LABEL [${VALOR}] (s/n): " CONFIRM
+    if [[ "$CONFIRM" == "s" || "$CONFIRM" == "S" ]]; then
+      eval "$VARNAME='$VALOR'"
+      break
+    else
+      warn "Volviendo a ingresar $LABEL..."
+    fi
+  done
+}
 
 echo ""
 echo "=============================================="
 echo "  Instalación X-Road Security Server - X-BA  "
 echo "=============================================="
+
+# =============================================================================
+# 1. DATOS DEL ORGANISMO
+# =============================================================================
+echo ""
+echo "--- Datos del organismo ---"
+info "Estos datos los provee el equipo de X-BA del GCBA."
 echo ""
 
+# Ambiente
+while true; do
+  echo ""
+  echo "  Seleccione el ambiente:"
+  echo "  [1] HML - Homologación"
+  echo "  [2] PRD - Producción"
+  echo ""
+  read -p "  Opción (1/2): " OPT
+  case $OPT in
+    1) AMBIENTE="hml"; AMBIENTE_LABEL="HML - Homologación"; break ;;
+    2) AMBIENTE="prd"; AMBIENTE_LABEL="PRD - Producción"; break ;;
+    *) warn "Opción inválida, ingrese 1 o 2." ;;
+  esac
+done
+read -p "  Confirme ambiente [$AMBIENTE_LABEL] (s/n): " CONFIRM
+if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
+  fail "Instalación cancelada. Volvé a ejecutar el script."
+fi
+ok "Ambiente: $AMBIENTE_LABEL"
+
+# Member Class
+while true; do
+  echo ""
+  echo "  Seleccione el Member Class:"
+  echo "  [1] GOB - Organismos de Gobierno"
+  echo "  [2] JUS - Poder Judicial"
+  echo "  [3] LEG - Poder Legislativo"
+  echo ""
+  read -p "  Opción (1/2/3): " OPT
+  case $OPT in
+    1) MEMBER_CLASS="GOB"; break ;;
+    2) MEMBER_CLASS="JUS"; break ;;
+    3) MEMBER_CLASS="LEG"; break ;;
+    *) warn "Opción inválida." ;;
+  esac
+done
+read -p "  Confirme Member Class [$MEMBER_CLASS] (s/n): " CONFIRM
+if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
+  fail "Instalación cancelada. Volvé a ejecutar el script."
+fi
+ok "Member Class: $MEMBER_CLASS"
+
+# Member Code
+preguntar "Member Code (código del organismo, ej: 001)" MEMBER_CODE
+ok "Member Code: $MEMBER_CODE"
+
+# Server Code
+preguntar "Server Code (ej: ${AMBIENTE^^}001${MEMBER_CLASS})" SERVER_CODE
+ok "Server Code: $SERVER_CODE"
+
+# Resumen final antes de instalar
+echo ""
+echo "=============================================="
+echo "  Resumen de configuración"
+echo "=============================================="
+echo "  Ambiente     : $AMBIENTE_LABEL"
+echo "  Member Class : $MEMBER_CLASS"
+echo "  Member Code  : $MEMBER_CODE"
+echo "  Server Code  : $SERVER_CODE"
+echo "=============================================="
+echo ""
+read -p "¿Los datos son correctos? ¿Desea continuar con la instalación? (s/n): " CONFIRM
+if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
+  fail "Instalación cancelada. Volvé a ejecutar el script."
+fi
+
 # =============================================================================
-# 1. VERIFICACIONES PREVIAS
+# 2. VERIFICACIONES PREVIAS
 # =============================================================================
+echo ""
 echo "--- Verificando requisitos del sistema ---"
 
-# Verificar que se ejecuta como root
 if [ "$EUID" -ne 0 ]; then
   fail "Este script debe ejecutarse como root. Usá: sudo bash instalar_xroad.sh"
 fi
 
-# Verificar SO
 if [ ! -f /etc/redhat-release ]; then
   fail "Este script requiere Red Hat Enterprise Linux 8."
 fi
 RHEL_VERSION=$(cat /etc/redhat-release)
 ok "SO: $RHEL_VERSION"
 
-# Verificar RAM (mínimo 4 GB)
 RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
 if [ "$RAM_MB" -lt 3800 ]; then
   fail "RAM insuficiente: ${RAM_MB} MB. Se requieren al menos 4 GB."
 fi
 ok "RAM: ${RAM_MB} MB"
 
-# Verificar espacio en disco (mínimo 60 GB)
 DISK_GB=$(df / | awk 'NR==2{printf "%d", $4/1024/1024}')
 if [ "$DISK_GB" -lt 60 ]; then
-  fail "Espacio insuficiente: ${DISK_GB} GB libres en /. Se requieren al menos 60 GB."
+  fail "Espacio insuficiente: ${DISK_GB} GB libres. Se requieren al menos 60 GB."
 fi
 ok "Disco: ${DISK_GB} GB libres"
 
-# Verificar conectividad al repositorio de X-Road
 echo ""
 echo "--- Verificando conectividad ---"
 if ! curl -s --max-time 10 https://artifactory.niis.org > /dev/null; then
@@ -62,7 +153,7 @@ fi
 ok "Conectividad al repositorio de X-Road OK"
 
 # =============================================================================
-# 2. AGREGAR REPOSITORIO DE X-ROAD
+# 3. REPOSITORIO DE X-ROAD
 # =============================================================================
 echo ""
 echo "--- Configurando repositorio de X-Road ---"
@@ -79,7 +170,7 @@ REPO
 ok "Repositorio configurado"
 
 # =============================================================================
-# 3. INSTALAR X-ROAD SECURITY SERVER
+# 4. INSTALACIÓN
 # =============================================================================
 echo ""
 echo "--- Instalando X-Road Security Server ---"
@@ -91,14 +182,14 @@ dnf install -y xroad-securityserver 2>&1 | tail -5
 ok "X-Road Security Server instalado"
 
 # =============================================================================
-# 4. CONFIGURAR local.ini
+# 5. CONFIGURACIÓN
 # =============================================================================
 echo ""
 echo "--- Aplicando configuración ---"
 
 mkdir -p /etc/xroad/conf.d
 
-cat > /etc/xroad/conf.d/local.ini << 'INI'
+cat > /etc/xroad/conf.d/local.ini << INI
 [proxy]
 connector-host=0.0.0.0
 client-connector-port=8080
@@ -113,8 +204,18 @@ chmod 640 /etc/xroad/conf.d/local.ini
 
 ok "local.ini configurado"
 
+# Guardar datos del organismo para referencia
+cat > /etc/xroad/organismo.conf << CONF
+AMBIENTE=$AMBIENTE
+MEMBER_CLASS=$MEMBER_CLASS
+MEMBER_CODE=$MEMBER_CODE
+SERVER_CODE=$SERVER_CODE
+CONF
+
+ok "Datos del organismo guardados en /etc/xroad/organismo.conf"
+
 # =============================================================================
-# 5. HABILITAR Y ARRANCAR SERVICIOS
+# 6. SERVICIOS
 # =============================================================================
 echo ""
 echo "--- Iniciando servicios ---"
@@ -134,7 +235,7 @@ for SERVICIO in "${SERVICIOS[@]}"; do
 done
 
 # =============================================================================
-# 6. PRUEBA DE FUNCIONAMIENTO
+# 7. PRUEBA DE FUNCIONAMIENTO
 # =============================================================================
 echo ""
 echo "--- Verificando funcionamiento ---"
@@ -157,8 +258,10 @@ echo "=============================================="
 echo -e "${GREEN}  Instalación completada correctamente${NC}"
 echo "=============================================="
 echo ""
-echo "  URL de administración:"
-echo "  → https://${IP_SERVIDOR}:4000"
+echo "  Organismo    : $MEMBER_CLASS - $MEMBER_CODE"
+echo "  Server Code  : $SERVER_CODE"
+echo "  Ambiente     : $AMBIENTE_LABEL"
+echo "  URL de admin : https://${IP_SERVIDOR}:4000"
 echo ""
 echo "  PASOS MANUALES PENDIENTES:"
 echo "  1. Cargar el Anchor desde la UI"
@@ -168,6 +271,6 @@ echo "  4. Enviar los CSR para firma"
 echo "  5. Configurar Timestamping"
 echo "  6. Esperar aprobación del Management Request"
 echo ""
-echo "  Enviá el contenido de esta pantalla al equipo de X-BA"
-echo "  para validar la instalación."
+echo "  Enviá el contenido de esta pantalla al equipo"
+echo "  de X-BA para validar la instalación."
 echo "=============================================="
