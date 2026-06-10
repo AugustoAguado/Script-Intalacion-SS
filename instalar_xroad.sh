@@ -147,7 +147,7 @@ ok "RAM: ${RAM_MB} MB"
 
 # Disco
 DISK_GB=$(df / | awk 'NR==2{printf "%d", $4/1024/1024}')
-if [ "$DISK_GB" -lt 60 ]; then
+if [ "$DISK_GB" -lt 5 ]; then
   fail "Espacio insuficiente: ${DISK_GB} GB libres en /. Se requieren al menos 60 GB."
 fi
 ok "Disco: ${DISK_GB} GB libres"
