@@ -25,8 +25,8 @@ rollback() {
     xroad-monitor xroad-addon-messagelog xroad-base xroad-opmonitor 2>/dev/null || true
   dnf remove -y xroad-securityserver xroad-base xroad-addon-opmonitoring \
     xroad-autologin 2>/dev/null || true
-  systemctl stop postgresql-13 2>/dev/null || true
-  dnf remove -y postgresql13-server postgresql13-contrib 2>/dev/null || true
+  systemctl stop postgresql-14 2>/dev/null || true
+  dnf remove -y postgresql14-server postgresql14-contrib 2>/dev/null || true
   rm -f /etc/yum.repos.d/xroad.repo
   rm -f /etc/yum.repos.d/artifactory*
   rm -f /etc/xroad/conf.d/local.ini
@@ -164,6 +164,8 @@ if [ "$DISK_GB" -lt 5 ]; then
 fi
 ok "Disco: ${DISK_GB} GB libres"
 
+# test cambiar 5 por 60
+
 # =============================================================================
 # 4. VERIFICACIONES DE CONECTIVIDAD
 # =============================================================================
@@ -179,7 +181,7 @@ for PUERTO in 4001 80; do
   if nc -zw5 "$CENTRAL_SERVER" "$PUERTO" 2>/dev/null; then
     ok "Conectividad a $CENTRAL_SERVER:$PUERTO OK"
   else
-    warn "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Verificá que los puertos estén abiertos."
+    warn "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
   fi
 done
 
@@ -187,11 +189,11 @@ for PUERTO in 5500 5577; do
   if nc -zw5 "$MSS_SERVER" "$PUERTO" 2>/dev/null; then
     ok "Conectividad a $MSS_SERVER:$PUERTO OK"
   else
-    warn "Sin conectividad a $MSS_SERVER:$PUERTO. Verificá que los puertos estén abiertos."
+    warn "Sin conectividad a $MSS_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
   fi
 done
 
-# cambiados los fails por wans para poder test
+# TEST cambiar warn
 
 for PUERTO in 80 443 4000 5500 5577 8080; do
   if ss -tlnp | grep -q ":${PUERTO} "; then
@@ -239,32 +241,32 @@ ok "Java $(java -version 2>&1 | grep -oP '"\K[^"]+' | head -1)"
 # 7. POSTGRESQL 13
 # =============================================================================
 echo ""
-echo "--- Instalando PostgreSQL 13 ---"
+echo "--- Instalando PostgreSQL 14 ---"
 
 dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm 2>&1 | tail -3
 dnf -qy module disable postgresql 2>/dev/null || true
-dnf install -y postgresql13-server postgresql13-contrib 2>&1 | tail -3
-ok "PostgreSQL 13 instalado"
+dnf install -y postgresql14-server postgresql14-contrib 2>&1 | tail -3
+ok "PostgreSQL 14 instalado"
 
 # Inicializar base de datos
-if [ ! -f /var/lib/pgsql/13/data/PG_VERSION ]; then
-  /usr/pgsql-13/bin/postgresql-13-setup initdb
+if [ ! -f /var/lib/pgsql/14/data/PG_VERSION ]; then
+  /usr/pgsql-14/bin/postgresql-14-setup initdb
   ok "Base de datos inicializada"
 fi
 
 # Habilitar conexiones locales
-PG_HBA="/var/lib/pgsql/13/data/pg_hba.conf"
+PG_HBA="/var/lib/pgsql/14/data/pg_hba.conf"
 if ! grep -q "0.0.0.0/0" "$PG_HBA" 2>/dev/null; then
   echo "host all all 0.0.0.0/0 md5" >> "$PG_HBA"
 fi
 
 # Habilitar listen_addresses
-PG_CONF="/var/lib/pgsql/13/data/postgresql.conf"
+PG_CONF="/var/lib/pgsql/14/data/postgresql.conf"
 sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" "$PG_CONF" 2>/dev/null || true
 
-systemctl enable postgresql-13
-systemctl start postgresql-13
-ok "PostgreSQL 13 corriendo"
+systemctl enable postgresql-14
+systemctl start postgresql-14
+ok "PostgreSQL 14 corriendo"
 
 # =============================================================================
 # 8. REPOSITORIOS DE X-ROAD
