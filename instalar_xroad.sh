@@ -16,16 +16,19 @@ fail() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 info() { echo -e "${CYAN}[INFO]${NC} $1"; }
 
 # =============================================================================
-# ROLLBACK — se ejecuta automáticamente si algo falla
+# ROLLBACK
 # =============================================================================
 rollback() {
   echo ""
   warn "Ocurrió un error. Ejecutando rollback..."
   systemctl stop xroad-proxy xroad-proxy-ui-api xroad-confclient xroad-signer \
-    xroad-monitor xroad-addon-messagelog xroad-base 2>/dev/null || true
+    xroad-monitor xroad-addon-messagelog xroad-base xroad-opmonitor 2>/dev/null || true
   dnf remove -y xroad-securityserver xroad-base xroad-addon-opmonitoring \
     xroad-autologin 2>/dev/null || true
+  systemctl stop postgresql-13 2>/dev/null || true
+  dnf remove -y postgresql13-server postgresql13-contrib 2>/dev/null || true
   rm -f /etc/yum.repos.d/xroad.repo
+  rm -f /etc/yum.repos.d/artifactory*
   rm -f /etc/xroad/conf.d/local.ini
   rm -f /etc/xroad/organismo.conf
   warn "Rollback completado. El servidor quedó en el estado anterior."
@@ -79,7 +82,6 @@ echo "--- Datos del organismo ---"
 info "Estos datos son provistos por el equipo de X-BA del GCBA."
 echo ""
 
-# Ambiente
 while true; do
   echo "  Seleccione el ambiente:"
   echo "  [1] HML - Homologación"
@@ -119,7 +121,6 @@ preguntar "Server Code (dato provisto por X-BA, ej: PRD001JUS)" SERVER_CODE
 SERVER_CODE=$(echo "$SERVER_CODE" | tr '[:lower:]' '[:upper:]')
 ok "Server Code: $SERVER_CODE"
 
-# Resumen y confirmación final
 echo ""
 echo "=============================================="
 echo "  Resumen de configuración"
@@ -142,7 +143,6 @@ fi
 echo ""
 echo "--- Verificando requisitos del sistema ---"
 
-# SO RHEL 8
 if [ ! -f /etc/redhat-release ]; then
   fail "Este script requiere Red Hat Enterprise Linux 8."
 fi
@@ -152,14 +152,12 @@ if [ "$RHEL_MAJOR" != "8" ]; then
 fi
 ok "SO: $(cat /etc/redhat-release)"
 
-# RAM mínimo 4 GB
 RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
 if [ "$RAM_MB" -lt 3800 ]; then
   fail "RAM insuficiente: ${RAM_MB} MB. Se requieren al menos 4 GB."
 fi
 ok "RAM: ${RAM_MB} MB"
 
-# Disco mínimo 60 GB
 DISK_GB=$(df / | awk 'NR==2{printf "%d", $4/1024/1024}')
 if [ "$DISK_GB" -lt 5 ]; then
   fail "Espacio insuficiente: ${DISK_GB} GB libres. Se requieren al menos 60 GB."
@@ -172,31 +170,27 @@ ok "Disco: ${DISK_GB} GB libres"
 echo ""
 echo "--- Verificando conectividad ---"
 
-# Salida a internet
 if ! curl -s --max-time 10 https://artifactory.niis.org > /dev/null; then
   fail "Sin acceso al repositorio de X-Road (artifactory.niis.org). El servidor necesita salida a internet."
 fi
 ok "Salida a internet OK"
 
-# Central Server puerto 4001 y 80
 for PUERTO in 4001 80; do
   if nc -zw5 "$CENTRAL_SERVER" "$PUERTO" 2>/dev/null; then
     ok "Conectividad a $CENTRAL_SERVER:$PUERTO OK"
   else
-    warn "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
+    fail "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
   fi
 done
 
-# MSS puertos 5500 y 5577
 for PUERTO in 5500 5577; do
   if nc -zw5 "$MSS_SERVER" "$PUERTO" 2>/dev/null; then
     ok "Conectividad a $MSS_SERVER:$PUERTO OK"
   else
-    warn  "Sin conectividad a $MSS_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
+    fail "Sin conectividad a $MSS_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
   fi
 done
 
-# Puertos locales libres
 for PUERTO in 80 443 4000 5500 5577 8080; do
   if ss -tlnp | grep -q ":${PUERTO} "; then
     warn "Puerto ${PUERTO} ya está en uso. Puede generar conflictos."
@@ -211,35 +205,82 @@ done
 echo ""
 echo "--- Preparando sistema operativo ---"
 
-# Configurar locale
 if ! grep -q "LC_ALL=en_US.UTF-8" /etc/environment 2>/dev/null; then
   echo "LC_ALL=en_US.UTF-8" >> /etc/environment
 fi
 export LC_ALL=en_US.UTF-8
 ok "Locale configurado (LC_ALL=en_US.UTF-8)"
 
-# Instalar yum-utils
-dnf install -y yum-utils nc 2>&1 | tail -3
+dnf install -y yum-utils nc 2>&1 | tail -2
 ok "yum-utils instalado"
 
 # =============================================================================
-# 6. REPOSITORIOS
+# 6. JAVA 11
+# =============================================================================
+echo ""
+echo "--- Verificando Java 11 ---"
+
+JAVA_VER=$(java -version 2>&1 | grep -oP '"\K[^"]+' | head -1 | cut -d. -f1)
+if [ "$JAVA_VER" != "11" ]; then
+  info "Instalando Java 11..."
+  dnf install -y java-11-openjdk 2>&1 | tail -2
+  alternatives --set java java-11-openjdk.x86_64 2>/dev/null || true
+fi
+
+# Forzar Java 11 en el entorno
+JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))
+echo "JAVA_HOME=$JAVA_HOME" >> /etc/environment
+export JAVA_HOME=$JAVA_HOME
+ok "Java $(java -version 2>&1 | grep -oP '"\K[^"]+' | head -1)"
+
+# =============================================================================
+# 7. POSTGRESQL 13
+# =============================================================================
+echo ""
+echo "--- Instalando PostgreSQL 13 ---"
+
+dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm 2>&1 | tail -3
+dnf -qy module disable postgresql 2>/dev/null || true
+dnf install -y postgresql13-server postgresql13-contrib 2>&1 | tail -3
+ok "PostgreSQL 13 instalado"
+
+# Inicializar base de datos
+if [ ! -f /var/lib/pgsql/13/data/PG_VERSION ]; then
+  /usr/pgsql-13/bin/postgresql-13-setup initdb
+  ok "Base de datos inicializada"
+fi
+
+# Habilitar conexiones locales
+PG_HBA="/var/lib/pgsql/13/data/pg_hba.conf"
+if ! grep -q "0.0.0.0/0" "$PG_HBA" 2>/dev/null; then
+  echo "host all all 0.0.0.0/0 md5" >> "$PG_HBA"
+fi
+
+# Habilitar listen_addresses
+PG_CONF="/var/lib/pgsql/13/data/postgresql.conf"
+sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" "$PG_CONF" 2>/dev/null || true
+
+systemctl enable postgresql-13
+systemctl start postgresql-13
+ok "PostgreSQL 13 corriendo"
+
+# =============================================================================
+# 8. REPOSITORIOS DE X-ROAD
 # =============================================================================
 echo ""
 echo "--- Configurando repositorios ---"
 
-# EPEL
 RHEL_MAJOR_VERSION=$(source /etc/os-release; echo ${VERSION_ID%.*})
-dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${RHEL_MAJOR_VERSION}.noarch.rpm 2>&1 | tail -3
+
+dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${RHEL_MAJOR_VERSION}.noarch.rpm 2>&1 | tail -2
 ok "Repositorio EPEL configurado"
 
-# X-Road 7.3.2
-yum-config-manager --add-repo https://artifactory.niis.org/xroad-release-rpm/rhel/${RHEL_MAJOR_VERSION}/7.3.2/ 2>&1 | tail -3
+yum-config-manager --add-repo https://artifactory.niis.org/xroad-release-rpm/rhel/${RHEL_MAJOR_VERSION}/7.3.2/ 2>&1 | tail -2
 rpm --import https://artifactory.niis.org/api/gpg/key/public
 ok "Repositorio X-Road 7.3.2 configurado"
 
 # =============================================================================
-# 7. INSTALACIÓN
+# 9. INSTALACIÓN X-ROAD
 # =============================================================================
 echo ""
 echo "--- Instalando X-Road Security Server ---"
@@ -249,14 +290,14 @@ echo ""
 dnf install -y xroad-securityserver 2>&1 | tail -5
 ok "xroad-securityserver instalado"
 
-dnf install -y xroad-addon-opmonitoring 2>&1 | tail -3
+dnf install -y xroad-addon-opmonitoring 2>&1 | tail -2
 ok "xroad-addon-opmonitoring instalado"
 
-dnf install -y xroad-autologin 2>&1 | tail -3
+dnf install -y xroad-autologin 2>&1 | tail -2
 ok "xroad-autologin instalado"
 
 # =============================================================================
-# 8. CONFIGURAR local.ini
+# 10. CONFIGURAR local.ini
 # =============================================================================
 echo ""
 echo "--- Aplicando configuración ---"
@@ -276,7 +317,6 @@ chown xroad:xroad /etc/xroad/conf.d/local.ini
 chmod 640 /etc/xroad/conf.d/local.ini
 ok "local.ini configurado (puertos 80/443)"
 
-# Guardar datos del organismo
 cat > /etc/xroad/organismo.conf << CONF
 AMBIENTE=$AMBIENTE
 MEMBER_CLASS=$MEMBER_CLASS
@@ -288,23 +328,23 @@ CONF
 ok "Datos del organismo guardados en /etc/xroad/organismo.conf"
 
 # =============================================================================
-# 9. FIREWALL
+# 11. FIREWALL
 # =============================================================================
 echo ""
 echo "--- Configurando firewall ---"
 
-if systemctl is-active firewalld &>/dev/null; then
-  for PUERTO in 80/tcp 443/tcp 4000/tcp 5500/tcp 5577/tcp 8080/tcp; do
-    firewall-cmd --zone=public --add-port=$PUERTO --permanent 2>/dev/null
-    ok "Puerto $PUERTO habilitado en firewall"
-  done
-  firewall-cmd --reload 2>/dev/null
-else
-  warn "firewalld no está activo. Verificá manualmente que los puertos estén abiertos."
+if ! systemctl is-active firewalld &>/dev/null; then
+  systemctl start firewalld
 fi
 
+for PUERTO in 80/tcp 443/tcp 4000/tcp 5500/tcp 5577/tcp 8080/tcp 5432/tcp; do
+  firewall-cmd --zone=public --add-port=$PUERTO --permanent 2>/dev/null
+  ok "Puerto $PUERTO habilitado en firewall"
+done
+firewall-cmd --reload 2>/dev/null
+
 # =============================================================================
-# 10. SERVICIOS
+# 12. SERVICIOS
 # =============================================================================
 echo ""
 echo "--- Iniciando servicios ---"
@@ -326,18 +366,18 @@ done
 systemctl daemon-reload
 
 # =============================================================================
-# 11. PRUEBA DE FUNCIONAMIENTO
+# 13. PRUEBA DE FUNCIONAMIENTO
 # =============================================================================
 echo ""
 echo "--- Verificando funcionamiento ---"
 
-sleep 8
+sleep 15
 
 HTTP_CODE=$(curl -sk --max-time 15 https://localhost:4000 -o /dev/null -w "%{http_code}")
 if echo "$HTTP_CODE" | grep -qE "200|302|401"; then
   ok "UI de X-Road respondiendo en puerto 4000 (HTTP $HTTP_CODE)"
 else
-  warn "La UI no responde en puerto 4000. Revisá: systemctl status xroad-proxy-ui-api"
+  fail "La UI no responde en puerto 4000. Revisá los logs con: journalctl -u xroad-proxy-ui-api"
 fi
 
 if ss -tlnp | grep -q ":5500 "; then
