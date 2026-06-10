@@ -4,8 +4,6 @@
 # Plataforma X-BA — GCBA
 # =============================================================================
 
-set -e
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -17,6 +15,26 @@ warn() { echo -e "${YELLOW}[AVISO]${NC} $1"; }
 fail() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 info() { echo -e "${CYAN}[INFO]${NC} $1"; }
 
+# =============================================================================
+# ROLLBACK — se ejecuta automáticamente si algo falla
+# =============================================================================
+rollback() {
+  echo ""
+  warn "Ocurrió un error. Ejecutando rollback..."
+  systemctl stop xroad-proxy xroad-proxy-ui-api xroad-confclient xroad-signer xroad-monitor xroad-addon-messagelog xroad-base 2>/dev/null || true
+  dnf remove -y xroad-securityserver xroad-base 2>/dev/null || true
+  rm -f /etc/yum.repos.d/xroad.repo
+  rm -f /etc/xroad/conf.d/local.ini
+  rm -f /etc/xroad/organismo.conf
+  warn "Rollback completado. El servidor quedó en el estado anterior a la instalación."
+  warn "Revisá el error de arriba, corregilo y volvé a ejecutar el script."
+  exit 1
+}
+trap rollback ERR
+
+# =============================================================================
+# FUNCIÓN PARA PREGUNTAR CON CONFIRMACIÓN
+# =============================================================================
 preguntar() {
   local LABEL=$1
   local VARNAME=$2
@@ -44,14 +62,21 @@ echo "  Instalación X-Road Security Server - X-BA  "
 echo "=============================================="
 
 # =============================================================================
-# 1. DATOS DEL ORGANISMO
+# 1. VERIFICAR ROOT ANTES DE PEDIR DATOS
+# =============================================================================
+if [ "$EUID" -ne 0 ]; then
+  fail "Este script debe ejecutarse como root. Usá: sudo bash instalar_xroad.sh"
+fi
+
+# =============================================================================
+# 2. DATOS DEL ORGANISMO
 # =============================================================================
 echo ""
 echo "--- Datos del organismo ---"
 info "Estos datos son provistos por el equipo de X-BA del GCBA."
 echo ""
 
-# Ambiente — selección fija
+# Ambiente
 while true; do
   echo "  Seleccione el ambiente:"
   echo "  [1] HML - Homologación"
@@ -70,21 +95,18 @@ if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
 fi
 ok "Ambiente: $AMBIENTE_LABEL"
 
-# Member Class — texto libre
 preguntar "Member Class (dato provisto por X-BA)" MEMBER_CLASS
 MEMBER_CLASS=$(echo "$MEMBER_CLASS" | tr '[:lower:]' '[:upper:]')
 ok "Member Class: $MEMBER_CLASS"
 
-# Member Code — texto libre
 preguntar "Member Code (dato provisto por X-BA)" MEMBER_CODE
 ok "Member Code: $MEMBER_CODE"
 
-# Server Code — texto libre
 preguntar "Server Code (dato provisto por X-BA)" SERVER_CODE
 SERVER_CODE=$(echo "$SERVER_CODE" | tr '[:lower:]' '[:upper:]')
 ok "Server Code: $SERVER_CODE"
 
-# Resumen final
+# Resumen y confirmación final
 echo ""
 echo "=============================================="
 echo "  Resumen de configuración"
@@ -101,42 +123,59 @@ if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
 fi
 
 # =============================================================================
-# 2. VERIFICACIONES PREVIAS
+# 3. VERIFICACIONES DEL SISTEMA
 # =============================================================================
 echo ""
 echo "--- Verificando requisitos del sistema ---"
 
-if [ "$EUID" -ne 0 ]; then
-  fail "Este script debe ejecutarse como root. Usá: sudo bash instalar_xroad.sh"
-fi
-
+# SO
 if [ ! -f /etc/redhat-release ]; then
   fail "Este script requiere Red Hat Enterprise Linux 8."
 fi
-RHEL_VERSION=$(cat /etc/redhat-release)
-ok "SO: $RHEL_VERSION"
+RHEL_MAJOR=$(cat /etc/redhat-release | grep -oP '\d+' | head -1)
+if [ "$RHEL_MAJOR" != "8" ]; then
+  fail "Se requiere RHEL 8. Versión detectada: $(cat /etc/redhat-release)"
+fi
+ok "SO: $(cat /etc/redhat-release)"
 
+# RAM
 RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
 if [ "$RAM_MB" -lt 3800 ]; then
   fail "RAM insuficiente: ${RAM_MB} MB. Se requieren al menos 4 GB."
 fi
 ok "RAM: ${RAM_MB} MB"
 
+# Disco
 DISK_GB=$(df / | awk 'NR==2{printf "%d", $4/1024/1024}')
-if [ "$DISK_GB" -lt 5 ]; then
-  fail "Espacio insuficiente: ${DISK_GB} GB libres. Se requieren al menos 60 GB."
+if [ "$DISK_GB" -lt 60 ]; then
+  fail "Espacio insuficiente: ${DISK_GB} GB libres en /. Se requieren al menos 60 GB."
 fi
 ok "Disco: ${DISK_GB} GB libres"
 
+# =============================================================================
+# 4. VERIFICACIONES DE CONECTIVIDAD Y PUERTOS
+# =============================================================================
 echo ""
 echo "--- Verificando conectividad ---"
+
+# Repositorio de X-Road
 if ! curl -s --max-time 10 https://artifactory.niis.org > /dev/null; then
-  fail "Sin acceso al repositorio de X-Road (artifactory.niis.org). Verificá que el servidor tenga salida a internet."
+  fail "Sin acceso al repositorio de X-Road (artifactory.niis.org). El servidor necesita salida a internet."
 fi
-ok "Conectividad al repositorio de X-Road OK"
+ok "Repositorio de X-Road accesible"
+
+# Puertos que deben estar libres
+PUERTOS_REQUERIDOS=(4000 5500 5577 8080 80 443)
+for PUERTO in "${PUERTOS_REQUERIDOS[@]}"; do
+  if ss -tlnp | grep -q ":${PUERTO} "; then
+    warn "Puerto ${PUERTO} ya está en uso. Puede generar conflictos."
+  else
+    ok "Puerto ${PUERTO} disponible"
+  fi
+done
 
 # =============================================================================
-# 3. REPOSITORIO DE X-ROAD
+# 5. REPOSITORIO DE X-ROAD
 # =============================================================================
 echo ""
 echo "--- Configurando repositorio de X-Road ---"
@@ -153,7 +192,7 @@ REPO
 ok "Repositorio configurado"
 
 # =============================================================================
-# 4. INSTALACIÓN
+# 6. INSTALACIÓN
 # =============================================================================
 echo ""
 echo "--- Instalando X-Road Security Server ---"
@@ -165,7 +204,7 @@ dnf install -y xroad-securityserver 2>&1 | tail -5
 ok "X-Road Security Server instalado"
 
 # =============================================================================
-# 5. CONFIGURACIÓN
+# 7. CONFIGURACIÓN
 # =============================================================================
 echo ""
 echo "--- Aplicando configuración ---"
@@ -192,10 +231,10 @@ MEMBER_CLASS=$MEMBER_CLASS
 MEMBER_CODE=$MEMBER_CODE
 SERVER_CODE=$SERVER_CODE
 CONF
-ok "Datos del organismo guardados en /etc/xroad/organismo.conf"
+ok "Datos del organismo guardados"
 
 # =============================================================================
-# 6. SERVICIOS
+# 8. SERVICIOS
 # =============================================================================
 echo ""
 echo "--- Iniciando servicios ---"
@@ -214,30 +253,58 @@ for SERVICIO in "${SERVICIOS[@]}"; do
   systemctl enable "$SERVICIO" --now 2>/dev/null && ok "$SERVICIO" || warn "$SERVICIO no pudo iniciarse"
 done
 
+# Verificar que los servicios sobreviven un reinicio
+systemctl daemon-reload
+
 # =============================================================================
-# 7. PRUEBA DE FUNCIONAMIENTO
+# 9. PRUEBA DE FUNCIONAMIENTO
 # =============================================================================
 echo ""
 echo "--- Verificando funcionamiento ---"
 
-sleep 5
+sleep 8
 
-if curl -sk --max-time 10 https://localhost:4000 -o /dev/null -w "%{http_code}" | grep -qE "200|302|401"; then
-  ok "UI de X-Road respondiendo en puerto 4000"
+# UI
+HTTP_CODE=$(curl -sk --max-time 15 https://localhost:4000 -o /dev/null -w "%{http_code}")
+if echo "$HTTP_CODE" | grep -qE "200|302|401"; then
+  ok "UI de X-Road respondiendo en puerto 4000 (HTTP $HTTP_CODE)"
 else
-  warn "La UI no responde todavía. Puede que los servicios necesiten unos segundos más."
+  warn "La UI no responde en puerto 4000. Revisá los servicios con: systemctl status xroad-proxy-ui-api"
 fi
+
+# Puerto externo
+if ss -tlnp | grep -q ":5500 "; then
+  ok "Puerto externo 5500 escuchando"
+else
+  warn "Puerto externo 5500 no está escuchando. Revisá xroad-proxy."
+fi
+
+# Estado de todos los servicios
+echo ""
+echo "--- Estado de servicios ---"
+for SERVICIO in "${SERVICIOS[@]}"; do
+  STATUS=$(systemctl is-active "$SERVICIO" 2>/dev/null)
+  if [ "$STATUS" == "active" ]; then
+    ok "$SERVICIO: activo"
+  else
+    warn "$SERVICIO: $STATUS"
+  fi
+done
 
 # =============================================================================
 # RESUMEN FINAL
 # =============================================================================
 IP_SERVIDOR=$(hostname -I | awk '{print $1}')
+FECHA=$(date '+%d/%m/%Y %H:%M:%S')
 
 echo ""
 echo "=============================================="
 echo -e "${GREEN}  Instalación completada correctamente${NC}"
 echo "=============================================="
 echo ""
+echo "  Fecha        : $FECHA"
+echo "  Hostname     : $(hostname)"
+echo "  IP           : $IP_SERVIDOR"
 echo "  Organismo    : $MEMBER_CLASS - $MEMBER_CODE"
 echo "  Server Code  : $SERVER_CODE"
 echo "  Ambiente     : $AMBIENTE_LABEL"
@@ -251,6 +318,6 @@ echo "  4. Enviar los CSR para firma"
 echo "  5. Configurar Timestamping"
 echo "  6. Esperar aprobación del Management Request"
 echo ""
-echo "  Enviá el contenido de esta pantalla al equipo"
-echo "  de X-BA para validar la instalación."
+echo "  *** Enviá el contenido completo de esta"
+echo "  *** pantalla al equipo de X-BA para validar."
 echo "=============================================="
