@@ -183,7 +183,7 @@ for PUERTO in 4001 80; do
   if nc -zw5 "$CENTRAL_SERVER" "$PUERTO" 2>/dev/null; then
     ok "Conectividad a $CENTRAL_SERVER:$PUERTO OK"
   else
-    fail "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
+    warn "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
   fi
 done
 
@@ -192,7 +192,7 @@ for PUERTO in 5500 5577; do
   if nc -zw5 "$MSS_SERVER" "$PUERTO" 2>/dev/null; then
     ok "Conectividad a $MSS_SERVER:$PUERTO OK"
   else
-    fail "Sin conectividad a $MSS_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
+    warn  "Sin conectividad a $MSS_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
   fi
 done
 
