@@ -48,29 +48,43 @@ echo "=============================================="
 # =============================================================================
 echo ""
 echo "--- Datos del organismo ---"
-info "Estos datos los provee el equipo de X-BA del GCBA."
+info "Estos datos son provistos por el equipo de X-BA del GCBA."
 echo ""
 
-preguntar "Ambiente (HML o PRD)" AMBIENTE
-AMBIENTE=$(echo "$AMBIENTE" | tr '[:upper:]' '[:lower:]')
-if [[ "$AMBIENTE" != "hml" && "$AMBIENTE" != "prd" ]]; then
-  fail "Ambiente inválido. Debe ser HML o PRD."
+# Ambiente — selección fija
+while true; do
+  echo "  Seleccione el ambiente:"
+  echo "  [1] HML - Homologación"
+  echo "  [2] PRD - Producción"
+  echo ""
+  read -p "  Opción (1/2): " OPT </dev/tty
+  case $OPT in
+    1) AMBIENTE="hml"; AMBIENTE_LABEL="HML - Homologación"; break ;;
+    2) AMBIENTE="prd"; AMBIENTE_LABEL="PRD - Producción"; break ;;
+    *) warn "Opción inválida, ingrese 1 o 2." ; echo "" ;;
+  esac
+done
+read -p "  Confirme ambiente [$AMBIENTE_LABEL] (s/n): " CONFIRM </dev/tty
+if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
+  fail "Instalación cancelada. Volvé a ejecutar el script."
 fi
-AMBIENTE_LABEL=$(echo "$AMBIENTE" | tr '[:lower:]' '[:upper:]')
 ok "Ambiente: $AMBIENTE_LABEL"
 
-preguntar "Member Class (ej: GOB, JUS, LEG)" MEMBER_CLASS
+# Member Class — texto libre
+preguntar "Member Class (dato provisto por X-BA)" MEMBER_CLASS
 MEMBER_CLASS=$(echo "$MEMBER_CLASS" | tr '[:lower:]' '[:upper:]')
 ok "Member Class: $MEMBER_CLASS"
 
-preguntar "Member Code (ej: 001)" MEMBER_CODE
+# Member Code — texto libre
+preguntar "Member Code (dato provisto por X-BA)" MEMBER_CODE
 ok "Member Code: $MEMBER_CODE"
 
-preguntar "Server Code (ej: ${AMBIENTE_LABEL}001${MEMBER_CLASS})" SERVER_CODE
+# Server Code — texto libre
+preguntar "Server Code (dato provisto por X-BA)" SERVER_CODE
 SERVER_CODE=$(echo "$SERVER_CODE" | tr '[:lower:]' '[:upper:]')
 ok "Server Code: $SERVER_CODE"
 
-# Resumen final antes de instalar
+# Resumen final
 echo ""
 echo "=============================================="
 echo "  Resumen de configuración"
