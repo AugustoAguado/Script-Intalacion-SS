@@ -23,12 +23,12 @@ preguntar() {
   local VALOR=""
   while true; do
     echo ""
-    read -p "  Ingrese $LABEL: " VALOR
+    read -p "  Ingrese $LABEL: " VALOR </dev/tty
     if [ -z "$VALOR" ]; then
       warn "El campo no puede estar vacío."
       continue
     fi
-    read -p "  Confirme $LABEL [${VALOR}] (s/n): " CONFIRM
+    read -p "  Confirme $LABEL [${VALOR}] (s/n): " CONFIRM </dev/tty
     if [[ "$CONFIRM" == "s" || "$CONFIRM" == "S" ]]; then
       eval "$VARNAME='$VALOR'"
       break
@@ -51,54 +51,23 @@ echo "--- Datos del organismo ---"
 info "Estos datos los provee el equipo de X-BA del GCBA."
 echo ""
 
-# Ambiente
-while true; do
-  echo ""
-  echo "  Seleccione el ambiente:"
-  echo "  [1] HML - Homologación"
-  echo "  [2] PRD - Producción"
-  echo ""
-  read -p "  Opción (1/2): " OPT
-  case $OPT in
-    1) AMBIENTE="hml"; AMBIENTE_LABEL="HML - Homologación"; break ;;
-    2) AMBIENTE="prd"; AMBIENTE_LABEL="PRD - Producción"; break ;;
-    *) warn "Opción inválida, ingrese 1 o 2." ;;
-  esac
-done
-read -p "  Confirme ambiente [$AMBIENTE_LABEL] (s/n): " CONFIRM
-if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
-  fail "Instalación cancelada. Volvé a ejecutar el script."
+preguntar "Ambiente (HML o PRD)" AMBIENTE
+AMBIENTE=$(echo "$AMBIENTE" | tr '[:upper:]' '[:lower:]')
+if [[ "$AMBIENTE" != "hml" && "$AMBIENTE" != "prd" ]]; then
+  fail "Ambiente inválido. Debe ser HML o PRD."
 fi
+AMBIENTE_LABEL=$(echo "$AMBIENTE" | tr '[:lower:]' '[:upper:]')
 ok "Ambiente: $AMBIENTE_LABEL"
 
-# Member Class
-while true; do
-  echo ""
-  echo "  Seleccione el Member Class:"
-  echo "  [1] GOB - Organismos de Gobierno"
-  echo "  [2] JUS - Poder Judicial"
-  echo "  [3] LEG - Poder Legislativo"
-  echo ""
-  read -p "  Opción (1/2/3): " OPT
-  case $OPT in
-    1) MEMBER_CLASS="GOB"; break ;;
-    2) MEMBER_CLASS="JUS"; break ;;
-    3) MEMBER_CLASS="LEG"; break ;;
-    *) warn "Opción inválida." ;;
-  esac
-done
-read -p "  Confirme Member Class [$MEMBER_CLASS] (s/n): " CONFIRM
-if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
-  fail "Instalación cancelada. Volvé a ejecutar el script."
-fi
+preguntar "Member Class (ej: GOB, JUS, LEG)" MEMBER_CLASS
+MEMBER_CLASS=$(echo "$MEMBER_CLASS" | tr '[:lower:]' '[:upper:]')
 ok "Member Class: $MEMBER_CLASS"
 
-# Member Code
-preguntar "Member Code (código del organismo, ej: 001)" MEMBER_CODE
+preguntar "Member Code (ej: 001)" MEMBER_CODE
 ok "Member Code: $MEMBER_CODE"
 
-# Server Code
-preguntar "Server Code (ej: ${AMBIENTE^^}001${MEMBER_CLASS})" SERVER_CODE
+preguntar "Server Code (ej: ${AMBIENTE_LABEL}001${MEMBER_CLASS})" SERVER_CODE
+SERVER_CODE=$(echo "$SERVER_CODE" | tr '[:lower:]' '[:upper:]')
 ok "Server Code: $SERVER_CODE"
 
 # Resumen final antes de instalar
@@ -112,7 +81,7 @@ echo "  Member Code  : $MEMBER_CODE"
 echo "  Server Code  : $SERVER_CODE"
 echo "=============================================="
 echo ""
-read -p "¿Los datos son correctos? ¿Desea continuar con la instalación? (s/n): " CONFIRM
+read -p "¿Los datos son correctos? ¿Desea continuar con la instalación? (s/n): " CONFIRM </dev/tty
 if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
   fail "Instalación cancelada. Volvé a ejecutar el script."
 fi
@@ -201,17 +170,14 @@ INI
 
 chown xroad:xroad /etc/xroad/conf.d/local.ini
 chmod 640 /etc/xroad/conf.d/local.ini
-
 ok "local.ini configurado"
 
-# Guardar datos del organismo para referencia
 cat > /etc/xroad/organismo.conf << CONF
 AMBIENTE=$AMBIENTE
 MEMBER_CLASS=$MEMBER_CLASS
 MEMBER_CODE=$MEMBER_CODE
 SERVER_CODE=$SERVER_CODE
 CONF
-
 ok "Datos del organismo guardados en /etc/xroad/organismo.conf"
 
 # =============================================================================
