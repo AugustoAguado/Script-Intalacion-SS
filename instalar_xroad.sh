@@ -380,6 +380,7 @@ systemctl daemon-reload
 echo ""
 echo "--- Verificando funcionamiento ---"
 
+trap - ERR
 sleep 20
 
 HTTP_CODE=$(curl -sk --max-time 20 https://localhost:4000 -o /dev/null -w "%{http_code}")
