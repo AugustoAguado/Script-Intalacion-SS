@@ -176,7 +176,7 @@ for PUERTO in 4001 80; do
   if nc -zw5 "$CENTRAL_SERVER" "$PUERTO" 2>/dev/null; then
     ok "Conectividad a $CENTRAL_SERVER:$PUERTO OK"
   else
-    warn "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
+    warn  "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
   fi
 done
 
@@ -409,9 +409,26 @@ for SERVICIO in "${SERVICIOS[@]}"; do
 done
 
 # =============================================================================
+# 14. CREAR USUARIO ADMINISTRADOR
+# =============================================================================
+echo ""
+echo "--- Creando usuario administrador ---"
+info "Se va a crear el usuario para acceder a la UI de X-Road."
+echo ""
+
+preguntar "nombre de usuario para la UI de X-Road (ej: admin)" XROAD_USER
+xroad-add-admin-user "$XROAD_USER"
+ok "Usuario $XROAD_USER creado. Acordate de la contraseña que pusiste."
+
+# =============================================================================
 # RESUMEN FINAL
 # =============================================================================
-IP_SERVIDOR=$(hostname -I | awk '{print $1}')
+# Obtener la IP correcta (la que no sea 127.0.0.1 ni la de VirtualBox NAT 10.0.2.x)
+IP_SERVIDOR=$(hostname -I | tr ' ' '\n' | grep -v '^127\.' | grep -v '^10\.0\.2\.' | head -1)
+# Si no encontró ninguna, usar la primera disponible
+if [ -z "$IP_SERVIDOR" ]; then
+  IP_SERVIDOR=$(hostname -I | awk '{print $1}')
+fi
 FECHA=$(date '+%d/%m/%Y %H:%M:%S')
 
 echo ""
@@ -428,19 +445,26 @@ echo "  Member Class    : $MEMBER_CLASS"
 echo "  Member Code     : $MEMBER_CODE"
 echo "  Server Code     : $SERVER_CODE"
 echo "  URL de admin    : https://${IP_SERVIDOR}:4000"
+echo "  Usuario UI      : $XROAD_USER"
 echo ""
 echo "  PASOS MANUALES PENDIENTES:"
 echo "  1. Acceder a la UI: https://${IP_SERVIDOR}:4000"
+echo "     Usuario: $XROAD_USER / Contraseña: la que configuraste"
 echo "  2. Cargar el Anchor File (provisto por X-BA)"
-echo "  3. Ingresar Member Class, Member Code y Server Code"
+echo "  3. Ingresar Member Class: $MEMBER_CLASS"
+echo "     Member Code: $MEMBER_CODE"
+echo "     Server Code: $SERVER_CODE"
 echo "  4. Configurar PIN del Signer (guardarlo, no se puede cambiar)"
-echo "  5. Generar keys AUTH y SIGN (formato DER), exportar CSR"
-echo "  6. Enviar los CSR a Seguridad Informática de ASI para firma"
-echo "  7. Importar los certificados firmados (.PEM) desde la UI"
-echo "  8. Registrar el certificado AUTH con la IP/DNS del SS"
-echo "  9. Configurar Timestamping: Settings > System Parameters"
-echo "     (Para SS externos usar *.buenosaires.gob.ar, NO GCBA-TSU01)"
-echo " 10. Esperar aprobación del Management Request (aprox. 5 min)"
+echo "  5. Generar key AUTH → Add Key → label AUTH → Usage: AUTHENTICATION → CSR Format: DER"
+echo "  6. Generar key SIGN → Add Key → label SIGN → Usage: SIGNING → CSR Format: DER"
+echo "  7. Enviar los CSR (.der) a Seguridad Informática de ASI para firma"
+echo "  8. Una vez recibidos los certificados firmados (.PEM),"
+echo "     importarlos desde Keys and Certificates → Import Cert."
+echo "  9. Activar los certificados y registrar el AUTH con la IP del SS"
+echo " 10. Configurar Timestamping: Settings → System Parameters"
+echo "     ⚠️  Para SS externos usar *.buenosaires.gob.ar, NO GCBA-TSU01"
+echo " 11. Esperar aprobación del Management Request en el Central Server"
+echo "     (aprox. 5 min si la aprobación es automática)"
 echo ""
 echo "  *** Enviá el contenido completo de esta pantalla"
 echo "  *** al equipo de X-BA para validar la instalación."
