@@ -16,18 +16,15 @@ fail() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 info() { echo -e "${CYAN}[INFO]${NC} $1"; }
 
 # =============================================================================
-# ROLLBACK
+# ROLLBACK — solo para errores críticos antes de instalar X-Road
 # =============================================================================
 rollback() {
   echo ""
-  warn "Ocurrió un error. Ejecutando rollback..."
+  warn "Ocurrió un error durante la instalación. Ejecutando rollback..."
   systemctl stop xroad-proxy xroad-proxy-ui-api xroad-confclient xroad-signer \
     xroad-monitor xroad-addon-messagelog xroad-base xroad-opmonitor 2>/dev/null || true
   dnf remove -y xroad-securityserver xroad-base xroad-addon-opmonitoring \
     xroad-autologin 2>/dev/null || true
-  systemctl stop postgresql-14 2>/dev/null || true
-  dnf remove -y postgresql14-server postgresql14-contrib 2>/dev/null || true
-  rm -f /etc/yum.repos.d/xroad.repo
   rm -f /etc/yum.repos.d/artifactory*
   rm -f /etc/xroad/conf.d/local.ini
   rm -f /etc/xroad/organismo.conf
@@ -164,8 +161,6 @@ if [ "$DISK_GB" -lt 5 ]; then
 fi
 ok "Disco: ${DISK_GB} GB libres"
 
-# test cambiar 5 por 60
-
 # =============================================================================
 # 4. VERIFICACIONES DE CONECTIVIDAD
 # =============================================================================
@@ -181,7 +176,7 @@ for PUERTO in 4001 80; do
   if nc -zw5 "$CENTRAL_SERVER" "$PUERTO" 2>/dev/null; then
     ok "Conectividad a $CENTRAL_SERVER:$PUERTO OK"
   else
-    warn "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
+    fail "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
   fi
 done
 
@@ -189,11 +184,9 @@ for PUERTO in 5500 5577; do
   if nc -zw5 "$MSS_SERVER" "$PUERTO" 2>/dev/null; then
     ok "Conectividad a $MSS_SERVER:$PUERTO OK"
   else
-    warn "Sin conectividad a $MSS_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
+    fail "Sin conectividad a $MSS_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
   fi
 done
-
-# TEST cambiar warn
 
 for PUERTO in 80 443 4000 5500 5577 8080; do
   if ss -tlnp | grep -q ":${PUERTO} "; then
@@ -232,41 +225,53 @@ if [ "$JAVA_VER" != "11" ]; then
 fi
 
 # Forzar Java 11 en el entorno
-JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))
-echo "JAVA_HOME=$JAVA_HOME" >> /etc/environment
-export JAVA_HOME=$JAVA_HOME
+if ! grep -q "JAVA_HOME" /etc/environment 2>/dev/null; then
+  JAVA_HOME_PATH=$(dirname $(dirname $(readlink -f $(which java))))
+  echo "JAVA_HOME=$JAVA_HOME_PATH" >> /etc/environment
+  export JAVA_HOME=$JAVA_HOME_PATH
+fi
 ok "Java $(java -version 2>&1 | grep -oP '"\K[^"]+' | head -1)"
 
 # =============================================================================
-# 7. POSTGRESQL 13
+# 7. POSTGRESQL 14
 # =============================================================================
 echo ""
-echo "--- Instalando PostgreSQL 14 ---"
+echo "--- Verificando PostgreSQL 14 ---"
 
-dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm 2>&1 | tail -3
-dnf -qy module disable postgresql 2>/dev/null || true
-dnf install -y postgresql14-server postgresql14-contrib 2>&1 | tail -3
-ok "PostgreSQL 14 instalado"
+if systemctl is-active postgresql-14 &>/dev/null; then
+  ok "PostgreSQL 14 ya está corriendo"
+else
+  info "Instalando PostgreSQL 14..."
 
-# Inicializar base de datos
-if [ ! -f /var/lib/pgsql/14/data/PG_VERSION ]; then
-  /usr/pgsql-14/bin/postgresql-14-setup initdb
-  ok "Base de datos inicializada"
+  # Instalar repo pgdg si no existe
+  if [ ! -f /etc/yum.repos.d/pgdg-redhat-all.repo ]; then
+    rpm -e pgdg-redhat-repo --nodeps 2>/dev/null || true
+    dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm 2>&1 | tail -2
+  fi
+
+  dnf -qy module disable postgresql 2>/dev/null || true
+  dnf install -y postgresql14-server postgresql14-contrib 2>&1 | tail -3
+  ok "PostgreSQL 14 instalado"
+
+  # Inicializar base de datos
+  if [ ! -f /var/lib/pgsql/14/data/PG_VERSION ]; then
+    /usr/pgsql-14/bin/postgresql-14-setup initdb
+    ok "Base de datos inicializada"
+  fi
+
+  # Habilitar conexiones
+  PG_HBA="/var/lib/pgsql/14/data/pg_hba.conf"
+  if ! grep -q "0.0.0.0/0" "$PG_HBA" 2>/dev/null; then
+    echo "host all all 0.0.0.0/0 md5" >> "$PG_HBA"
+  fi
+
+  PG_CONF="/var/lib/pgsql/14/data/postgresql.conf"
+  sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" "$PG_CONF" 2>/dev/null || true
+
+  systemctl enable postgresql-14
+  systemctl start postgresql-14
+  ok "PostgreSQL 14 corriendo"
 fi
-
-# Habilitar conexiones locales
-PG_HBA="/var/lib/pgsql/14/data/pg_hba.conf"
-if ! grep -q "0.0.0.0/0" "$PG_HBA" 2>/dev/null; then
-  echo "host all all 0.0.0.0/0 md5" >> "$PG_HBA"
-fi
-
-# Habilitar listen_addresses
-PG_CONF="/var/lib/pgsql/14/data/postgresql.conf"
-sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" "$PG_CONF" 2>/dev/null || true
-
-systemctl enable postgresql-14
-systemctl start postgresql-14
-ok "PostgreSQL 14 corriendo"
 
 # =============================================================================
 # 8. REPOSITORIOS DE X-ROAD
@@ -291,7 +296,7 @@ echo "--- Instalando X-Road Security Server ---"
 echo "    (esto puede tardar unos minutos)"
 echo ""
 
-dnf install -y xroad-securityserver 2>&1 | tail -5
+dnf install -y xroad-securityserver
 ok "xroad-securityserver instalado"
 
 dnf install -y xroad-addon-opmonitoring 2>&1 | tail -2
@@ -375,20 +380,14 @@ systemctl daemon-reload
 echo ""
 echo "--- Verificando funcionamiento ---"
 
-sleep 15
+sleep 20
 
-# HTTP_CODE=$(curl -sk --max-time 15 https://localhost:4000 -o /dev/null -w "%{http_code}")
-# if echo "$HTTP_CODE" | grep -qE "200|302|401"; then
-#   ok "UI de X-Road respondiendo en puerto 4000 (HTTP $HTTP_CODE)"
-# else
-#   fail "La UI no responde en puerto 4000. Revisá los logs con: journalctl -u xroad-proxy-ui-api"
-# fi
-
-HTTP_CODE=$(curl -sk --max-time 15 https://localhost:4000 -o /dev/null -w "%{http_code}")
+HTTP_CODE=$(curl -sk --max-time 20 https://localhost:4000 -o /dev/null -w "%{http_code}")
 if echo "$HTTP_CODE" | grep -qE "200|302|401"; then
   ok "UI de X-Road respondiendo en puerto 4000 (HTTP $HTTP_CODE)"
 else
-  warn "La UI no responde todavía en puerto 4000. Los servicios pueden necesitar más tiempo."
+  warn "La UI no responde todavía en puerto 4000. Puede necesitar unos minutos más."
+  warn "Verificá con: curl -sk https://localhost:4000 -o /dev/null -w '%{http_code}'"
 fi
 
 if ss -tlnp | grep -q ":5500 "; then
