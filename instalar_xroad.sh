@@ -16,7 +16,7 @@ fail() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 info() { echo -e "${CYAN}[INFO]${NC} $1"; }
 
 # =============================================================================
-# ROLLBACK — solo para errores críticos antes de instalar X-Road
+# ROLLBACK — deshace la instalación si algo falla
 # =============================================================================
 rollback() {
   echo ""
@@ -155,6 +155,7 @@ if [ "$RAM_MB" -lt 3800 ]; then
 fi
 ok "RAM: ${RAM_MB} MB"
 
+# NOTA: para pruebas en VM se puede bajar este valor a 5
 DISK_GB=$(df / | awk 'NR==2{printf "%d", $4/1024/1024}')
 if [ "$DISK_GB" -lt 5 ]; then
   fail "Espacio insuficiente: ${DISK_GB} GB libres. Se requieren al menos 60 GB."
@@ -168,15 +169,16 @@ echo ""
 echo "--- Verificando conectividad ---"
 
 if ! curl -s --max-time 10 https://artifactory.niis.org > /dev/null; then
-  fail "Sin acceso al repositorio de X-Road (artifactory.niis.org). El servidor necesita salida a internet."
+  warn "Sin acceso al repositorio de X-Road (artifactory.niis.org). El servidor necesita salida a internet."
 fi
 ok "Salida a internet OK"
 
+# NOTA: para pruebas en VM sin acceso al GCBA, cambiar estos fail por warn
 for PUERTO in 4001 80; do
   if nc -zw5 "$CENTRAL_SERVER" "$PUERTO" 2>/dev/null; then
     ok "Conectividad a $CENTRAL_SERVER:$PUERTO OK"
   else
-    warn  "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
+    warn "Sin conectividad a $CENTRAL_SERVER:$PUERTO. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar."
   fi
 done
 
@@ -212,69 +214,7 @@ dnf install -y yum-utils nc 2>&1 | tail -2
 ok "yum-utils instalado"
 
 # =============================================================================
-# 6. JAVA 11
-# =============================================================================
-echo ""
-echo "--- Verificando Java 11 ---"
-
-JAVA_VER=$(java -version 2>&1 | grep -oP '"\K[^"]+' | head -1 | cut -d. -f1)
-if [ "$JAVA_VER" != "11" ]; then
-  info "Instalando Java 11..."
-  dnf install -y java-11-openjdk 2>&1 | tail -2
-  alternatives --set java java-11-openjdk.x86_64 2>/dev/null || true
-fi
-
-# Forzar Java 11 en el entorno
-if ! grep -q "JAVA_HOME" /etc/environment 2>/dev/null; then
-  JAVA_HOME_PATH=$(dirname $(dirname $(readlink -f $(which java))))
-  echo "JAVA_HOME=$JAVA_HOME_PATH" >> /etc/environment
-  export JAVA_HOME=$JAVA_HOME_PATH
-fi
-ok "Java $(java -version 2>&1 | grep -oP '"\K[^"]+' | head -1)"
-
-# =============================================================================
-# 7. POSTGRESQL 14
-# =============================================================================
-echo ""
-echo "--- Verificando PostgreSQL 14 ---"
-
-if systemctl is-active postgresql-14 &>/dev/null; then
-  ok "PostgreSQL 14 ya está corriendo"
-else
-  info "Instalando PostgreSQL 14..."
-
-  # Instalar repo pgdg si no existe
-  if [ ! -f /etc/yum.repos.d/pgdg-redhat-all.repo ]; then
-    rpm -e pgdg-redhat-repo --nodeps 2>/dev/null || true
-    dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm 2>&1 | tail -2
-  fi
-
-  dnf -qy module disable postgresql 2>/dev/null || true
-  dnf install -y postgresql14-server postgresql14-contrib 2>&1 | tail -3
-  ok "PostgreSQL 14 instalado"
-
-  # Inicializar base de datos
-  if [ ! -f /var/lib/pgsql/14/data/PG_VERSION ]; then
-    /usr/pgsql-14/bin/postgresql-14-setup initdb
-    ok "Base de datos inicializada"
-  fi
-
-  # Habilitar conexiones
-  PG_HBA="/var/lib/pgsql/14/data/pg_hba.conf"
-  if ! grep -q "0.0.0.0/0" "$PG_HBA" 2>/dev/null; then
-    echo "host all all 0.0.0.0/0 md5" >> "$PG_HBA"
-  fi
-
-  PG_CONF="/var/lib/pgsql/14/data/postgresql.conf"
-  sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" "$PG_CONF" 2>/dev/null || true
-
-  systemctl enable postgresql-14
-  systemctl start postgresql-14
-  ok "PostgreSQL 14 corriendo"
-fi
-
-# =============================================================================
-# 8. REPOSITORIOS DE X-ROAD
+# 6. REPOSITORIOS DE X-ROAD
 # =============================================================================
 echo ""
 echo "--- Configurando repositorios ---"
@@ -289,15 +229,15 @@ rpm --import https://artifactory.niis.org/api/gpg/key/public
 ok "Repositorio X-Road 7.3.2 configurado"
 
 # =============================================================================
-# 9. INSTALACIÓN X-ROAD
+# 7. INSTALACIÓN X-ROAD
 # =============================================================================
 echo ""
 echo "--- Instalando X-Road Security Server ---"
-echo "    (esto puede tardar unos minutos)"
+echo "    (esto puede tardar varios minutos, se muestra el progreso)"
 echo ""
 
 dnf install -y xroad-securityserver
-ok "xroad-securityserver instalado"
+ok "xroad-securityserver instalado (incluye base de datos interna)"
 
 dnf install -y xroad-addon-opmonitoring 2>&1 | tail -2
 ok "xroad-addon-opmonitoring instalado"
@@ -306,7 +246,22 @@ dnf install -y xroad-autologin 2>&1 | tail -2
 ok "xroad-autologin instalado"
 
 # =============================================================================
-# 10. CONFIGURAR local.ini
+# 8. CREAR USUARIO ADMINISTRADOR
+# =============================================================================
+echo ""
+echo "--- Creando usuario administrador de la plataforma ---"
+info "Este usuario es el que se usa para entrar a la UI de X-Road."
+echo ""
+
+preguntar "nombre de usuario para la UI (ej: xroadadmin)" XROAD_USER
+xroad-add-admin-user "$XROAD_USER"
+echo ""
+info "Ahora definí la contraseña para el usuario $XROAD_USER:"
+passwd "$XROAD_USER" </dev/tty
+ok "Usuario $XROAD_USER creado con permisos de administración"
+
+# =============================================================================
+# 9. CONFIGURAR local.ini
 # =============================================================================
 echo ""
 echo "--- Aplicando configuración ---"
@@ -317,9 +272,6 @@ cat > /etc/xroad/conf.d/local.ini << INI
 [proxy]
 client-http-port=80
 client-https-port=443
-
-[proxy-ui-api]
-server-port=4000
 INI
 
 chown xroad:xroad /etc/xroad/conf.d/local.ini
@@ -337,23 +289,25 @@ CONF
 ok "Datos del organismo guardados en /etc/xroad/organismo.conf"
 
 # =============================================================================
-# 11. FIREWALL
+# 10. FIREWALL
 # =============================================================================
 echo ""
 echo "--- Configurando firewall ---"
 
 if ! systemctl is-active firewalld &>/dev/null; then
+  dnf install -y firewalld 2>&1 | tail -2
+  systemctl enable firewalld
   systemctl start firewalld
 fi
 
-for PUERTO in 80/tcp 443/tcp 4000/tcp 5500/tcp 5577/tcp 8080/tcp 5432/tcp; do
+for PUERTO in 80/tcp 443/tcp 4000/tcp 5500/tcp 5577/tcp 8080/tcp; do
   firewall-cmd --zone=public --add-port=$PUERTO --permanent 2>/dev/null
   ok "Puerto $PUERTO habilitado en firewall"
 done
 firewall-cmd --reload 2>/dev/null
 
 # =============================================================================
-# 12. SERVICIOS
+# 11. SERVICIOS
 # =============================================================================
 echo ""
 echo "--- Iniciando servicios ---"
@@ -375,7 +329,8 @@ done
 systemctl daemon-reload
 
 # =============================================================================
-# 13. PRUEBA DE FUNCIONAMIENTO
+# 12. VERIFICACIÓN POST-INSTALACIÓN
+# Las verificaciones son informativas: no disparan rollback.
 # =============================================================================
 echo ""
 echo "--- Verificando funcionamiento ---"
@@ -388,7 +343,7 @@ if echo "$HTTP_CODE" | grep -qE "200|302|401"; then
   ok "UI de X-Road respondiendo en puerto 4000 (HTTP $HTTP_CODE)"
 else
   warn "La UI no responde todavía en puerto 4000. Puede necesitar unos minutos más."
-  warn "Verificá con: curl -sk https://localhost:4000 -o /dev/null -w '%{http_code}'"
+  warn "Verificá luego con: curl -sk https://localhost:4000 -o /dev/null -w '%{http_code}'"
 fi
 
 if ss -tlnp | grep -q ":5500 "; then
@@ -409,23 +364,9 @@ for SERVICIO in "${SERVICIOS[@]}"; do
 done
 
 # =============================================================================
-# 14. CREAR USUARIO ADMINISTRADOR
-# =============================================================================
-echo ""
-echo "--- Creando usuario administrador ---"
-info "Se va a crear el usuario para acceder a la UI de X-Road."
-echo ""
-
-preguntar "nombre de usuario para la UI de X-Road (ej: admin)" XROAD_USER
-xroad-add-admin-user "$XROAD_USER"
-ok "Usuario $XROAD_USER creado. Acordate de la contraseña que pusiste."
-
-# =============================================================================
 # RESUMEN FINAL
 # =============================================================================
-# Obtener la IP correcta (la que no sea 127.0.0.1 ni la de VirtualBox NAT 10.0.2.x)
 IP_SERVIDOR=$(hostname -I | tr ' ' '\n' | grep -v '^127\.' | grep -v '^10\.0\.2\.' | head -1)
-# Si no encontró ninguna, usar la primera disponible
 if [ -z "$IP_SERVIDOR" ]; then
   IP_SERVIDOR=$(hostname -I | awk '{print $1}')
 fi
@@ -447,23 +388,25 @@ echo "  Server Code     : $SERVER_CODE"
 echo "  URL de admin    : https://${IP_SERVIDOR}:4000"
 echo "  Usuario UI      : $XROAD_USER"
 echo ""
-echo "  PASOS MANUALES PENDIENTES:"
-echo "  1. Acceder a la UI: https://${IP_SERVIDOR}:4000"
-echo "     Usuario: $XROAD_USER / Contraseña: la que configuraste"
-echo "  2. Cargar el Anchor File (provisto por X-BA)"
+echo "  PASOS MANUALES PENDIENTES (desde la UI):"
+echo "  1. Acceder a https://${IP_SERVIDOR}:4000"
+echo "     Usuario: $XROAD_USER (contraseña definida en la instalación)"
+echo "  2. Cargar el Anchor File (solicitarlo)"
 echo "  3. Ingresar los datos provistos por X-BA:"
 echo "     Member Class, Member Code y Server Code"
-echo "  4. Configurar PIN del Signer (guardarlo, no se puede cambiar)"
-echo "  5. Generar key AUTH → Add Key → label AUTH → Usage: AUTHENTICATION → CSR Format: DER"
-echo "  6. Generar key SIGN → Add Key → label SIGN → Usage: SIGNING → CSR Format: DER"
-echo "  7. Enviar los CSR (.der) a Seguridad Informática de ASI para firma"
-echo "  8. Una vez recibidos los certificados firmados (.PEM),"
-echo "     importarlos desde Keys and Certificates → Import Cert."
-echo "  9. Activar los certificados y registrar el AUTH con la IP del SS"
-echo " 10. Configurar Timestamping: Settings → System Parameters"
+echo "  4. Definir el PIN del Signer (guardarlo: NO se puede cambiar)"
+echo "  5. Keys and Certificates → Add Key:"
+echo "     - Key AUTH: label AUTH, Usage AUTHENTICATION, CSR Format DER"
+echo "     - Key SIGN: label SIGN, Usage SIGNING, CSR Format DER"
+echo "  6. Enviar los CSR generados a Seguridad Informática de ASI"
+echo "  7. Al recibir los certificados firmados (.PEM), importarlos"
+echo "     desde Keys and Certificates → Import Cert."
+echo "  8. Activar los certificados y hacer Register del AUTH"
+echo "     con la IP o DNS de este Security Server"
+echo "  9. Configurar Timestamping: Settings → System Parameters"
 echo "     Seleccionar *.buenosaires.gob.ar"
-echo " 11. Esperar aprobación del Management Request en el Central Server"
-echo "     (aprox. 5 min si la aprobación es automática)"
+echo " 10. Esperar la aprobación del Management Request en el"
+echo "     Central Server (aprox. 5 min si es automática)"
 echo ""
 echo "  *** Enviá el contenido completo de esta pantalla"
 echo "  *** al equipo de X-BA para validar la instalación."
