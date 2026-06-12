@@ -210,8 +210,22 @@ fi
 export LC_ALL=en_US.UTF-8
 ok "Locale configurado (LC_ALL=en_US.UTF-8)"
 
-dnf install -y yum-utils nc 2>&1 | tail -2
+dnf install -y yum-utils nc
 ok "yum-utils instalado"
+
+# =============================================================================
+# *. JAVA 11
+# =============================================================================
+echo ""
+echo "--- Verificando Java 11 ---"
+
+JAVA_VER=$(java -version 2>&1 | grep -oP '"\K[^"]+' | head -1 | cut -d. -f1)
+if [ "$JAVA_VER" != "11" ]; then
+  info "Java 11 no está configurado como default. Instalando..."
+  dnf install -y java-11-openjdk
+  alternatives --set java java-11-openjdk.x86_64 2>/dev/null || true
+fi
+ok "Java $(java -version 2>&1 | grep -oP '"\K[^"]+' | head -1)"
 
 # =============================================================================
 # 6. REPOSITORIOS DE X-ROAD
@@ -260,6 +274,7 @@ info "Ahora definí la contraseña para el usuario $XROAD_USER:"
 passwd "$XROAD_USER" </dev/tty
 ok "Usuario $XROAD_USER creado con permisos de administración"
 
+systemctl restart xroad-proxy-ui-api
 # =============================================================================
 # 9. CONFIGURAR local.ini
 # =============================================================================

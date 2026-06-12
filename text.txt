@@ -1,0 +1,319 @@
+systemctl stop xroad-proxy xroad-proxy-ui-api xroad-confclient xroad-signer xroad-monitor xroad-addon-messagelog xroad-base xroad-opmonitor 2>/dev/null; dnf remove -y xroad-securityserver xroad-base xroad-addon-opmonitoring xroad-autologin 2>/dev/null; rm -f /etc/yum.repos.d/artifactory* /etc/yum.repos.d/pgdg*; rm -rf /etc/xroad /var/lib/xroad /var/log/xroad; dnf clean all
+
+[root@xroad-test ~]# curl -o instalar_xroad.sh https://raw.githubusercontent.com/AugustoAguado/Script-Intalacion-SS/main/instalar_xroad.sh && bash instalar_xroad.sh
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100 14888  100 14888    0     0  45950      0 --:--:-- --:--:-- --:--:-- 45950
+
+==============================================
+  Instalación X-Road Security Server v7.3.2
+  Plataforma X-BA — GCBA
+==============================================
+
+--- Datos del organismo ---
+[INFO] Estos datos son provistos por el equipo de X-BA del GCBA.
+
+  Seleccione el ambiente:
+  [1] HML - Homologación
+  [2] PRD - Producción
+
+  Opción (1/2): 1
+  Confirme ambiente [HML - Homologación] (s/n): s
+[OK] Ambiente: HML - Homologación
+
+  Ingrese Member Class (dato provisto por X-BA, ej: GOB, JUS): JUS
+  Confirme Member Class (dato provisto por X-BA, ej: GOB, JUS) [JUS] (s/n): s
+[OK] Member Class: JUS
+
+  Ingrese Member Code (dato provisto por X-BA, ej: 001): 004
+  Confirme Member Code (dato provisto por X-BA, ej: 001) [004] (s/n): s
+[OK] Member Code: 004
+
+  Ingrese Server Code (dato provisto por X-BA, ej: PRD001JUS): HML004JUS
+  Confirme Server Code (dato provisto por X-BA, ej: PRD001JUS) [HML004JUS] (s/n): s
+[OK] Server Code: HML004JUS
+
+==============================================
+  Resumen de configuración
+==============================================
+  Ambiente        : HML - Homologación
+  Central Server  : xroad-central-hml.gcba.gob.ar
+  Member Class    : JUS
+  Member Code     : 004
+  Server Code     : HML004JUS
+==============================================
+
+¿Los datos son correctos? ¿Desea continuar? (s/n): s
+
+--- Verificando requisitos del sistema ---
+[OK] SO: Red Hat Enterprise Linux release 8.10 (Ootpa)
+[OK] RAM: 8325 MB
+[OK] Disco: 13 GB libres
+
+--- Verificando conectividad ---
+[OK] Salida a internet OK
+[AVISO] Sin conectividad a xroad-central-hml.gcba.gob.ar:4001. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar.
+[OK] Conectividad a xroad-central-hml.gcba.gob.ar:80 OK
+[AVISO] Sin conectividad a xroad-mss-hml.gcba.gob.ar:5500. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar.
+[AVISO] Sin conectividad a xroad-mss-hml.gcba.gob.ar:5577. Solicitá la apertura del puerto a la mesa de ayuda antes de continuar.
+[OK] Puerto 80 disponible
+[OK] Puerto 443 disponible
+[OK] Puerto 4000 disponible
+[OK] Puerto 5500 disponible
+[OK] Puerto 5577 disponible
+[OK] Puerto 8080 disponible
+
+--- Preparando sistema operativo ---
+[OK] Locale configurado (LC_ALL=en_US.UTF-8)
+Nothing to do.
+Complete!
+[OK] yum-utils instalado
+
+--- Configurando repositorios ---
+Nothing to do.
+Complete!
+[OK] Repositorio EPEL configurado
+
+Adding repo from: https://artifactory.niis.org/xroad-release-rpm/rhel/8/7.3.2/
+[OK] Repositorio X-Road 7.3.2 configurado
+
+--- Instalando X-Road Security Server ---
+    (esto puede tardar varios minutos, se muestra el progreso)
+
+Updating Subscription Management repositories.
+Unable to read consumer identity
+
+This system is not registered with an entitlement server. You can use subscription-manager to register.
+
+created by dnf config-manager from https://artifactory.niis.org/xroad-release-rpm/rhel/8/7.3.2/                                                              2.6 kB/s | 6.3 kB     00:02
+Dependencies resolved.
+=============================================================================================================================================================================================
+ Package                                        Architecture                Version                          Repository                                                                 Size
+=============================================================================================================================================================================================
+Installing:
+ xroad-securityserver                           noarch                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                      6.7 k
+Installing dependencies:
+ crudini                                        noarch                      0.9.3-1.el8                      epel                                                                       29 k
+ xroad-addon-messagelog                         x86_64                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                       95 M
+ xroad-addon-metaservices                       x86_64                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                      224 k
+ xroad-addon-proxymonitor                       x86_64                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                       58 k
+ xroad-addon-wsdlvalidator                      x86_64                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                      7.9 M
+ xroad-base                                     x86_64                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                      3.4 M
+ xroad-confclient                               x86_64                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                       40 M
+ xroad-database-local                           noarch                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                      6.7 k
+ xroad-monitor                                  x86_64                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                       52 M
+ xroad-proxy                                    x86_64                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                       54 M
+ xroad-proxy-ui-api                             x86_64                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                       86 M
+ xroad-signer                                   x86_64                      7.3.2-1.el8                      artifactory.niis.org_xroad-release-rpm_rhel_8_7.3.2_                       82 M
+
+Transaction Summary
+=============================================================================================================================================================================================
+Install  13 Packages
+
+Total download size: 422 M
+Installed size: 468 M
+Downloading Packages:
+(1/13): xroad-securityserver-7.3.2-1.el8.noarch.rpm                                                                                                          5.7 kB/s | 6.7 kB     00:01
+(2/13): xroad-database-local-7.3.2-1.el8.noarch.rpm                                                                                                           23 kB/s | 6.7 kB     00:00
+(3/13): xroad-addon-proxymonitor-7.3.2-1.el8.x86_64.rpm                                                                                                       72 kB/s |  58 kB     00:00
+(4/13): xroad-base-7.3.2-1.el8.x86_64.rpm                                                                                                                    306 kB/s | 3.4 MB     00:11
+(5/13): xroad-addon-wsdlvalidator-7.3.2-1.el8.x86_64.rpm                                                                                                     289 kB/s | 7.9 MB     00:28
+(6/13): xroad-confclient-7.3.2-1.el8.x86_64.rpm                                                                                                              180 kB/s |  40 MB     03:49
+(7/13): xroad-addon-messagelog-7.3.2-1.el8.x86_64.rpm                                                                                                        315 kB/s |  95 MB     05:09
+(8/13): xroad-proxy-ui-api-7.3.2-1.el8.x86_64.rpm                                                                                                            263 kB/s |  86 MB     05:33
+(9/13): xroad-addon-metaservices-7.3.2-1.el8.x86_64.rpm                                                                                                      221 kB/s | 224 kB     00:01
+(10/13): xroad-monitor-7.3.2-1.el8.x86_64.rpm                                                                                                                185 kB/s |  52 MB     04:48
+(11/13): crudini-0.9.3-1.el8.noarch.rpm                                                                                                                      123 kB/s |  29 kB     00:00
+(12/13): xroad-proxy-7.3.2-1.el8.x86_64.rpm                                                                                                                  280 kB/s |  54 MB     03:18
+(13/13): xroad-signer-7.3.2-1.el8.x86_64.rpm                                                                                                                 175 kB/s |  82 MB     08:02
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Total                                                                                                                                                        521 kB/s | 422 MB     13:48
+Running transaction check
+Transaction check succeeded.
+Running transaction test
+Transaction test succeeded.
+Running transaction
+  Preparing        :                                                                                                                                                                     1/1
+  Installing       : crudini-0.9.3-1.el8.noarch                                                                                                                                         1/13
+  Running scriptlet: xroad-base-7.3.2-1.el8.x86_64                                                                                                                                      2/13
+  Installing       : xroad-base-7.3.2-1.el8.x86_64                                                                                                                                      2/13
+  Running scriptlet: xroad-base-7.3.2-1.el8.x86_64                                                                                                                                      2/13
+  Running scriptlet: xroad-database-local-7.3.2-1.el8.noarch                                                                                                                            3/13
+  Installing       : xroad-database-local-7.3.2-1.el8.noarch                                                                                                                            3/13
+  Running scriptlet: xroad-database-local-7.3.2-1.el8.noarch                                                                                                                            3/13
+  Running scriptlet: xroad-confclient-7.3.2-1.el8.x86_64                                                                                                                                4/13
+  Installing       : xroad-confclient-7.3.2-1.el8.x86_64                                                                                                                                4/13
+  Running scriptlet: xroad-confclient-7.3.2-1.el8.x86_64                                                                                                                                4/13
+  Running scriptlet: xroad-monitor-7.3.2-1.el8.x86_64                                                                                                                                   5/13
+  Installing       : xroad-monitor-7.3.2-1.el8.x86_64                                                                                                                                   5/13
+  Running scriptlet: xroad-monitor-7.3.2-1.el8.x86_64                                                                                                                                   5/13
+  Running scriptlet: xroad-signer-7.3.2-1.el8.x86_64                                                                                                                                    6/13
+  Installing       : xroad-signer-7.3.2-1.el8.x86_64                                                                                                                                    6/13
+  Running scriptlet: xroad-signer-7.3.2-1.el8.x86_64                                                                                                                                    6/13
+  Running scriptlet: xroad-proxy-7.3.2-1.el8.x86_64                                                                                                                                     7/13
+  Installing       : xroad-proxy-7.3.2-1.el8.x86_64                                                                                                                                     7/13
+  Running scriptlet: xroad-proxy-7.3.2-1.el8.x86_64                                                                                                                                     7/13
+Job for postgresql.service failed because the control process exited with error code.
+See "systemctl status postgresql.service" and "journalctl -xe" for details.
+Generating new internal.[crt|key|p12] files
+
+  Running scriptlet: xroad-addon-wsdlvalidator-7.3.2-1.el8.x86_64                                                                                                                       8/13
+  Installing       : xroad-addon-wsdlvalidator-7.3.2-1.el8.x86_64                                                                                                                       8/13
+  Running scriptlet: xroad-addon-wsdlvalidator-7.3.2-1.el8.x86_64                                                                                                                       8/13
+  Running scriptlet: xroad-addon-proxymonitor-7.3.2-1.el8.x86_64                                                                                                                        9/13
+  Installing       : xroad-addon-proxymonitor-7.3.2-1.el8.x86_64                                                                                                                        9/13
+  Running scriptlet: xroad-proxy-ui-api-7.3.2-1.el8.x86_64                                                                                                                             10/13
+  Installing       : xroad-proxy-ui-api-7.3.2-1.el8.x86_64                                                                                                                             10/13
+  Running scriptlet: xroad-proxy-ui-api-7.3.2-1.el8.x86_64                                                                                                                             10/13
+Generating new proxy-ui-api.[crt|key|p12] files
+
+  Running scriptlet: xroad-addon-messagelog-7.3.2-1.el8.x86_64                                                                                                                         11/13
+  Installing       : xroad-addon-messagelog-7.3.2-1.el8.x86_64                                                                                                                         11/13
+  Running scriptlet: xroad-addon-messagelog-7.3.2-1.el8.x86_64                                                                                                                         11/13
+  Running scriptlet: xroad-addon-metaservices-7.3.2-1.el8.x86_64                                                                                                                       12/13
+  Installing       : xroad-addon-metaservices-7.3.2-1.el8.x86_64                                                                                                                       12/13
+  Running scriptlet: xroad-securityserver-7.3.2-1.el8.noarch                                                                                                                           13/13
+  Installing       : xroad-securityserver-7.3.2-1.el8.noarch                                                                                                                           13/13
+  Running scriptlet: xroad-securityserver-7.3.2-1.el8.noarch                                                                                                                           13/13
+  Running scriptlet: xroad-proxy-7.3.2-1.el8.x86_64                                                                                                                                    13/13
+Update resources: DB & GPG
+psql: /usr/pgsql-14/lib/libpq.so.5: no version information available (required by psql)
+psql: /usr/pgsql-14/lib/libpq.so.5: no version information available (required by psql)
+ERROR:  database "serverconf" already exists
+Creating database 'serverconf' on '127.0.0.1:5432' failed, please check database availability and configuration in /etc/xroad/db.properties and /etc/xroad.properties
+
+  Running scriptlet: xroad-addon-messagelog-7.3.2-1.el8.x86_64                                                                                                                         13/13
+psql: /usr/pgsql-14/lib/libpq.so.5: no version information available (required by psql)
+psql: /usr/pgsql-14/lib/libpq.so.5: no version information available (required by psql)
+ERROR:  database "messagelog" already exists
+Creating database 'messagelog' on '127.0.0.1:5432' failed, please check database availability and configuration in /etc/xroad/db.properties and /etc/xroad.properties
+warning: %posttrans(xroad-addon-messagelog-7.3.2-1.el8.x86_64) scriptlet failed, exit status 1
+
+Error in POSTTRANS scriptlet in rpm package xroad-addon-messagelog
+  Running scriptlet: xroad-securityserver-7.3.2-1.el8.noarch                                                                                                                           13/13
+  Verifying        : xroad-base-7.3.2-1.el8.x86_64                                                                                                                                      1/13
+  Verifying        : xroad-addon-wsdlvalidator-7.3.2-1.el8.x86_64                                                                                                                       2/13
+  Verifying        : xroad-securityserver-7.3.2-1.el8.noarch                                                                                                                            3/13
+  Verifying        : xroad-database-local-7.3.2-1.el8.noarch                                                                                                                            4/13
+  Verifying        : xroad-addon-proxymonitor-7.3.2-1.el8.x86_64                                                                                                                        5/13
+  Verifying        : xroad-confclient-7.3.2-1.el8.x86_64                                                                                                                                6/13
+  Verifying        : xroad-proxy-ui-api-7.3.2-1.el8.x86_64                                                                                                                              7/13
+  Verifying        : xroad-addon-messagelog-7.3.2-1.el8.x86_64                                                                                                                          8/13
+  Verifying        : xroad-monitor-7.3.2-1.el8.x86_64                                                                                                                                   9/13
+  Verifying        : xroad-proxy-7.3.2-1.el8.x86_64                                                                                                                                    10/13
+  Verifying        : xroad-addon-metaservices-7.3.2-1.el8.x86_64                                                                                                                       11/13
+  Verifying        : xroad-signer-7.3.2-1.el8.x86_64                                                                                                                                   12/13
+  Verifying        : crudini-0.9.3-1.el8.noarch                                                                                                                                        13/13
+Installed products updated.
+
+Installed:
+  crudini-0.9.3-1.el8.noarch                      xroad-addon-messagelog-7.3.2-1.el8.x86_64    xroad-addon-metaservices-7.3.2-1.el8.x86_64    xroad-addon-proxymonitor-7.3.2-1.el8.x86_64
+  xroad-addon-wsdlvalidator-7.3.2-1.el8.x86_64    xroad-base-7.3.2-1.el8.x86_64                xroad-confclient-7.3.2-1.el8.x86_64            xroad-database-local-7.3.2-1.el8.noarch
+  xroad-monitor-7.3.2-1.el8.x86_64                xroad-proxy-7.3.2-1.el8.x86_64               xroad-proxy-ui-api-7.3.2-1.el8.x86_64          xroad-securityserver-7.3.2-1.el8.noarch
+  xroad-signer-7.3.2-1.el8.x86_64
+
+Complete!
+[OK] xroad-securityserver instalado (incluye base de datos interna)
+
+Complete!
+[OK] xroad-addon-opmonitoring instalado
+
+Complete!
+[OK] xroad-autologin instalado
+
+--- Creando usuario administrador de la plataforma ---
+[INFO] Este usuario es el que se usa para entrar a la UI de X-Road.
+
+
+  Ingrese nombre de usuario para la UI (ej: xroadadmin): admin
+  Confirme nombre de usuario para la UI (ej: xroadadmin) [admin] (s/n): s
+User admin exists, just adding to the xroad groups
+
+[INFO] Ahora definí la contraseña para el usuario admin:
+Changing password for user admin.
+New password:
+BAD PASSWORD: The password fails the dictionary check - it is based on a dictionary word
+Retype new password:
+passwd: all authentication tokens updated successfully.
+[OK] Usuario admin creado con permisos de administración
+
+--- Aplicando configuración ---
+[OK] local.ini configurado (puertos 80/443)
+[OK] Datos del organismo guardados en /etc/xroad/organismo.conf
+
+--- Configurando firewall ---
+success
+[OK] Puerto 80/tcp habilitado en firewall
+success
+[OK] Puerto 443/tcp habilitado en firewall
+success
+[OK] Puerto 4000/tcp habilitado en firewall
+success
+[OK] Puerto 5500/tcp habilitado en firewall
+success
+[OK] Puerto 5577/tcp habilitado en firewall
+success
+[OK] Puerto 8080/tcp habilitado en firewall
+success
+
+--- Iniciando servicios ---
+[OK] xroad-signer
+[OK] xroad-base
+[OK] xroad-confclient
+[OK] xroad-proxy
+[OK] xroad-proxy-ui-api
+[OK] xroad-monitor
+[OK] xroad-addon-messagelog
+
+--- Verificando funcionamiento ---
+[AVISO] La UI no responde todavía en puerto 4000. Puede necesitar unos minutos más.
+[AVISO] Verificá luego con: curl -sk https://localhost:4000 -o /dev/null -w '%{http_code}'
+[OK] Puerto externo 5500 escuchando
+
+--- Estado de servicios ---
+[OK] xroad-signer: activo
+[OK] xroad-base: activo
+[OK] xroad-confclient: activo
+[OK] xroad-proxy: activo
+[OK] xroad-proxy-ui-api: activo
+[OK] xroad-monitor: activo
+[OK] xroad-addon-messagelog: activo
+
+==============================================
+  Instalación completada correctamente
+==============================================
+
+  Fecha           : 11/06/2026 17:12:13
+  Hostname        : xroad-test.myguest.virtualbox.org
+  IP              : 192.168.56.101
+  Ambiente        : HML - Homologación
+  Central Server  : xroad-central-hml.gcba.gob.ar
+  Member Class    : JUS
+  Member Code     : 004
+  Server Code     : HML004JUS
+  URL de admin    : https://192.168.56.101:4000
+  Usuario UI      : admin
+
+  PASOS MANUALES PENDIENTES (desde la UI):
+  1. Acceder a https://192.168.56.101:4000
+     Usuario: admin (contraseña definida en la instalación)
+  2. Cargar el Anchor File (solicitarlo)
+  3. Ingresar los datos provistos por X-BA:
+     Member Class, Member Code y Server Code
+  4. Definir el PIN del Signer (guardarlo: NO se puede cambiar)
+  5. Keys and Certificates → Add Key:
+     - Key AUTH: label AUTH, Usage AUTHENTICATION, CSR Format DER
+     - Key SIGN: label SIGN, Usage SIGNING, CSR Format DER
+  6. Enviar los CSR generados a Seguridad Informática de ASI
+  7. Al recibir los certificados firmados (.PEM), importarlos
+     desde Keys and Certificates → Import Cert.
+  8. Activar los certificados y hacer Register del AUTH
+     con la IP o DNS de este Security Server
+  9. Configurar Timestamping: Settings → System Parameters
+     Seleccionar *.buenosaires.gob.ar
+ 10. Esperar la aprobación del Management Request en el
+     Central Server (aprox. 5 min si es automática)
+
+  *** Enviá el contenido completo de esta pantalla
+  *** al equipo de X-BA para validar la instalación.
+==============================================
