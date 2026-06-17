@@ -235,7 +235,8 @@ echo "--- Configurando repositorios ---"
 
 RHEL_MAJOR_VERSION=$(source /etc/os-release; echo ${VERSION_ID%.*})
 
-dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${RHEL_MAJOR_VERSION}.noarch.rpm 2>&1 | tail -2
+dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${RHEL_MAJOR_VERSION}.noarch.rpm
+dnf config-manager --set-enabled epel
 ok "Repositorio EPEL configurado"
 
 yum-config-manager --add-repo https://artifactory.niis.org/xroad-release-rpm/rhel/${RHEL_MAJOR_VERSION}/7.3.2/ 2>&1 | tail -2
