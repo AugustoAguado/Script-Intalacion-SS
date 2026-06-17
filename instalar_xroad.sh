@@ -2,6 +2,8 @@
 # =============================================================================
 # Instalación de X-Road Security Server v7.3.2
 # Plataforma X-BA — GCBA / Agencia de Sistemas de Información
+# Basado en: "Instalación y requisitos para agregar un Security Server
+#             en la plataforma X-Road ASI" v1.4
 # =============================================================================
 
 RED='\033[0;31m'
@@ -155,7 +157,6 @@ if [ "$RAM_MB" -lt 3800 ]; then
 fi
 ok "RAM: ${RAM_MB} MB"
 
-# NOTA: para pruebas en VM se puede bajar este valor a 5
 DISK_GB=$(df / | awk 'NR==2{printf "%d", $4/1024/1024}')
 if [ "$DISK_GB" -lt 5 ]; then
   fail "Espacio insuficiente: ${DISK_GB} GB libres. Se requieren al menos 60 GB."
@@ -173,7 +174,6 @@ if ! curl -s --max-time 10 https://artifactory.niis.org > /dev/null; then
 fi
 ok "Salida a internet OK"
 
-# NOTA: para pruebas en VM sin acceso al GCBA, cambiar estos fail por warn
 for PUERTO in 4001 80; do
   if nc -zw5 "$CENTRAL_SERVER" "$PUERTO" 2>/dev/null; then
     ok "Conectividad a $CENTRAL_SERVER:$PUERTO OK"
@@ -214,7 +214,7 @@ dnf install -y yum-utils nc
 ok "yum-utils instalado"
 
 # =============================================================================
-# *. JAVA 11
+# 6. JAVA 11
 # =============================================================================
 echo ""
 echo "--- Verificando Java 11 ---"
@@ -228,26 +228,29 @@ fi
 ok "Java $(java -version 2>&1 | grep -oP '"\K[^"]+' | head -1)"
 
 # =============================================================================
-# 6. REPOSITORIOS DE X-ROAD
+# 7. REPOSITORIOS DE X-ROAD
 # =============================================================================
 echo ""
 echo "--- Configurando repositorios ---"
 
 RHEL_MAJOR_VERSION=$(source /etc/os-release; echo ${VERSION_ID%.*})
 
+# EPEL — necesario para crudini (dependencia de xroad-base)
 dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${RHEL_MAJOR_VERSION}.noarch.rpm
 dnf config-manager --set-enabled epel
 ok "Repositorio EPEL configurado"
 
-yum-config-manager --add-repo https://artifactory.niis.org/xroad-release-rpm/rhel/${RHEL_MAJOR_VERSION}/7.3.2/ 2>&1 | tail -2
+# X-Road 7.3.2
+yum-config-manager --add-repo https://artifactory.niis.org/xroad-release-rpm/rhel/${RHEL_MAJOR_VERSION}/7.3.2/
 rpm --import https://artifactory.niis.org/api/gpg/key/public
 ok "Repositorio X-Road 7.3.2 configurado"
 
+# Refrescar caché con todos los repos activos
 dnf makecache
 ok "Caché de repositorios actualizado"
 
 # =============================================================================
-# 7. INSTALACIÓN X-ROAD
+# 8. INSTALACIÓN X-ROAD
 # =============================================================================
 echo ""
 echo "--- Instalando X-Road Security Server ---"
@@ -257,14 +260,14 @@ echo ""
 dnf install -y xroad-securityserver
 ok "xroad-securityserver instalado (incluye base de datos interna)"
 
-dnf install -y xroad-addon-opmonitoring 2>&1 | tail -2
+dnf install -y xroad-addon-opmonitoring
 ok "xroad-addon-opmonitoring instalado"
 
-dnf install -y xroad-autologin 2>&1 | tail -2
+dnf install -y xroad-autologin
 ok "xroad-autologin instalado"
 
 # =============================================================================
-# 8. CREAR USUARIO ADMINISTRADOR
+# 9. CREAR USUARIO ADMINISTRADOR
 # =============================================================================
 echo ""
 echo "--- Creando usuario administrador de la plataforma ---"
@@ -278,9 +281,8 @@ info "Ahora definí la contraseña para el usuario $XROAD_USER:"
 passwd "$XROAD_USER" </dev/tty
 ok "Usuario $XROAD_USER creado con permisos de administración"
 
-systemctl restart xroad-proxy-ui-api
 # =============================================================================
-# 9. CONFIGURAR local.ini
+# 10. CONFIGURAR local.ini
 # =============================================================================
 echo ""
 echo "--- Aplicando configuración ---"
@@ -308,13 +310,13 @@ CONF
 ok "Datos del organismo guardados en /etc/xroad/organismo.conf"
 
 # =============================================================================
-# 10. FIREWALL
+# 11. FIREWALL
 # =============================================================================
 echo ""
 echo "--- Configurando firewall ---"
 
 if ! systemctl is-active firewalld &>/dev/null; then
-  dnf install -y firewalld 2>&1 | tail -2
+  dnf install -y firewalld
   systemctl enable firewalld
   systemctl start firewalld
 fi
@@ -326,7 +328,7 @@ done
 firewall-cmd --reload 2>/dev/null
 
 # =============================================================================
-# 11. SERVICIOS
+# 12. SERVICIOS
 # =============================================================================
 echo ""
 echo "--- Iniciando servicios ---"
@@ -347,15 +349,20 @@ done
 
 systemctl daemon-reload
 
+# Restart de la UI para que el usuario recién creado pueda autenticarse
+sleep 5
+systemctl restart xroad-proxy-ui-api
+ok "xroad-proxy-ui-api reiniciado"
+
 # =============================================================================
-# 12. VERIFICACIÓN POST-INSTALACIÓN
+# 13. VERIFICACIÓN POST-INSTALACIÓN
 # Las verificaciones son informativas: no disparan rollback.
 # =============================================================================
 echo ""
 echo "--- Verificando funcionamiento ---"
 
 trap - ERR
-sleep 20
+sleep 25
 
 HTTP_CODE=$(curl -sk --max-time 20 https://localhost:4000 -o /dev/null -w "%{http_code}")
 if echo "$HTTP_CODE" | grep -qE "200|302|401"; then
@@ -410,7 +417,7 @@ echo ""
 echo "  PASOS MANUALES PENDIENTES (desde la UI):"
 echo "  1. Acceder a https://${IP_SERVIDOR}:4000"
 echo "     Usuario: $XROAD_USER (contraseña definida en la instalación)"
-echo "  2. Cargar el Anchor File (solicitarlo)"
+echo "  2. Cargar el Anchor File (solicitarlo a X-BA)"
 echo "  3. Ingresar los datos provistos por X-BA:"
 echo "     Member Class, Member Code y Server Code"
 echo "  4. Definir el PIN del Signer (guardarlo: NO se puede cambiar)"
