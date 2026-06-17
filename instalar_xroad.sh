@@ -236,8 +236,19 @@ echo "--- Configurando repositorios ---"
 RHEL_MAJOR_VERSION=$(source /etc/os-release; echo ${VERSION_ID%.*})
 
 # EPEL — necesario para crudini (dependencia de xroad-base)
-dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${RHEL_MAJOR_VERSION}.noarch.rpm
-dnf config-manager --set-enabled epel
+# En RHEL con suscripción hay que habilitar CodeReady Builder primero
+subscription-manager repos --enable codeready-builder-for-rhel-${RHEL_MAJOR_VERSION}-x86_64-rpms 2>/dev/null || true
+
+# Crear el repo de EPEL manualmente (funciona tanto con suscripción como sin ella)
+cat > /etc/yum.repos.d/epel.repo << 'EPELREPO'
+[epel]
+name=Extra Packages for Enterprise Linux 8 - x86_64
+metalink=https://mirrors.fedoraproject.org/metalink?repo=epel-8&arch=x86_64&infra=$infra&content=$contentdir
+enabled=1
+gpgcheck=1
+countme=1
+gpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-8
+EPELREPO
 ok "Repositorio EPEL configurado"
 
 # X-Road 7.3.2
