@@ -27,6 +27,15 @@ rollback() {
     xroad-monitor xroad-addon-messagelog xroad-base xroad-opmonitor 2>/dev/null || true
   dnf remove -y xroad-securityserver xroad-base xroad-addon-opmonitoring \
     xroad-autologin 2>/dev/null || true
+  sudo -u postgres psql -c "DROP DATABASE IF EXISTS serverconf;" 2>/dev/null || true
+  sudo -u postgres psql -c "DROP DATABASE IF EXISTS messagelog;" 2>/dev/null || true
+  sudo -u postgres psql -c "DROP DATABASE IF EXISTS \"op-monitor\";" 2>/dev/null || true
+  sudo -u postgres psql -c "DROP USER IF EXISTS serverconf;" 2>/dev/null || true
+  sudo -u postgres psql -c "DROP USER IF EXISTS serverconf_admin;" 2>/dev/null || true
+  sudo -u postgres psql -c "DROP USER IF EXISTS messagelog;" 2>/dev/null || true
+  sudo -u postgres psql -c "DROP USER IF EXISTS messagelog_admin;" 2>/dev/null || true
+  sudo -u postgres psql -c "DROP USER IF EXISTS opmonitor;" 2>/dev/null || true
+  sudo -u postgres psql -c "DROP USER IF EXISTS opmonitor_admin;" 2>/dev/null || true
   rm -f /etc/yum.repos.d/artifactory*
   rm -f /etc/xroad/conf.d/local.ini
   rm -f /etc/xroad/organismo.conf
@@ -289,7 +298,10 @@ preguntar "nombre de usuario para la UI (ej: xroadadmin)" XROAD_USER
 xroad-add-admin-user "$XROAD_USER"
 echo ""
 info "Ahora definí la contraseña para el usuario $XROAD_USER:"
-passwd "$XROAD_USER" </dev/tty
+while true; do
+  passwd "$XROAD_USER" </dev/tty && break
+  warn "Las contraseñas no coincidieron. Intentá de nuevo."
+done
 ok "Usuario $XROAD_USER creado con permisos de administración"
 
 # =============================================================================
