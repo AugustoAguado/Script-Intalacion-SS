@@ -242,6 +242,9 @@ yum-config-manager --add-repo https://artifactory.niis.org/xroad-release-rpm/rhe
 rpm --import https://artifactory.niis.org/api/gpg/key/public
 ok "Repositorio X-Road 7.3.2 configurado"
 
+dnf makecache
+ok "Caché de repositorios actualizado"
+
 # =============================================================================
 # 7. INSTALACIÓN X-ROAD
 # =============================================================================
