@@ -399,6 +399,21 @@ fi
 export LC_ALL=en_US.UTF-8
 ok "Locale configurado (LC_ALL=en_US.UTF-8)"
 
+RHEL_MAJOR_VERSION=$(source /etc/os-release; echo ${VERSION_ID%.*})
+
+# CodeReady Builder — necesario para algunas dependencias de EPEL.
+# En RHEL con suscripción hay que habilitarlo, pero si el sistema está
+# registrado sin entitlement válido queda "habilitado" y da 403 al bajar
+# metadata — y como ese estado lo guarda subscription-manager, persiste
+# entre corridas del script y rompe CUALQUIER dnf posterior (incluso el de
+# yum-utils de acá abajo). Por eso se valida antes del primer dnf install.
+CRB_REPO="codeready-builder-for-rhel-${RHEL_MAJOR_VERSION}-x86_64-rpms"
+subscription-manager repos --enable "$CRB_REPO" 2>/dev/null || true
+if ! dnf makecache --disablerepo='*' --enablerepo="$CRB_REPO" 2>/dev/null; then
+  warn "CodeReady Builder no está disponible (sin entitlement válido). Se continúa sin él."
+  subscription-manager repos --disable "$CRB_REPO" 2>/dev/null || true
+fi
+
 dnf install -y yum-utils nc
 ok "yum-utils instalado"
 
@@ -422,11 +437,8 @@ ok "Java $(java -version 2>&1 | grep -oP '"\K[^"]+' | head -1)"
 echo ""
 echo "--- Configurando repositorios ---"
 
-RHEL_MAJOR_VERSION=$(source /etc/os-release; echo ${VERSION_ID%.*})
-
-# EPEL — necesario para crudini (dependencia de xroad-base)
-# En RHEL con suscripción hay que habilitar CodeReady Builder primero
-subscription-manager repos --enable codeready-builder-for-rhel-${RHEL_MAJOR_VERSION}-x86_64-rpms 2>/dev/null || true
+# EPEL — necesario para crudini (dependencia de xroad-base).
+# CodeReady Builder ya se validó/dejó en estado correcto en el paso anterior.
 
 # Crear el repo de EPEL manualmente (funciona tanto con suscripción como sin ella)
 cat > /etc/yum.repos.d/epel.repo << 'EPELREPO'
