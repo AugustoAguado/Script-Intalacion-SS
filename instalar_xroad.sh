@@ -4,6 +4,10 @@
 # Plataforma X-BA — GCBA / Agencia de Sistemas de Información
 # Basado en: "Instalación y requisitos para agregar un Security Server
 #             en la plataforma X-Road ASI" v1.4
+#
+# Un mismo script cubre las dos VMs necesarias para DB externa:
+#   - Modo "Security Server": instala X-Road (DB interna o externa)
+#   - Modo "Base de Datos": prepara PostgreSQL en un host separado
 # =============================================================================
 
 RED='\033[0;31m'
@@ -23,22 +27,33 @@ info() { echo -e "${CYAN}[INFO]${NC} $1"; }
 rollback() {
   echo ""
   warn "Ocurrió un error durante la instalación. Ejecutando rollback..."
-  systemctl stop xroad-proxy xroad-proxy-ui-api xroad-confclient xroad-signer \
-    xroad-monitor xroad-addon-messagelog xroad-base xroad-opmonitor 2>/dev/null || true
-  dnf remove -y xroad-securityserver xroad-base xroad-addon-opmonitoring \
-    xroad-autologin 2>/dev/null || true
-  sudo -u postgres psql -c "DROP DATABASE IF EXISTS serverconf;" 2>/dev/null || true
-  sudo -u postgres psql -c "DROP DATABASE IF EXISTS messagelog;" 2>/dev/null || true
-  sudo -u postgres psql -c "DROP DATABASE IF EXISTS \"op-monitor\";" 2>/dev/null || true
-  sudo -u postgres psql -c "DROP USER IF EXISTS serverconf;" 2>/dev/null || true
-  sudo -u postgres psql -c "DROP USER IF EXISTS serverconf_admin;" 2>/dev/null || true
-  sudo -u postgres psql -c "DROP USER IF EXISTS messagelog;" 2>/dev/null || true
-  sudo -u postgres psql -c "DROP USER IF EXISTS messagelog_admin;" 2>/dev/null || true
-  sudo -u postgres psql -c "DROP USER IF EXISTS opmonitor;" 2>/dev/null || true
-  sudo -u postgres psql -c "DROP USER IF EXISTS opmonitor_admin;" 2>/dev/null || true
-  rm -f /etc/yum.repos.d/artifactory*
-  rm -f /etc/xroad/conf.d/local.ini
-  rm -f /etc/xroad/organismo.conf
+  if [ "$MODO" == "db" ]; then
+    systemctl stop postgresql-13 2>/dev/null || true
+    dnf remove -y 'postgresql13*' 2>/dev/null || true
+    rm -f /etc/yum.repos.d/pgdg*
+    rm -rf /var/lib/pgsql/13
+    dnf clean all 2>/dev/null || true
+  else
+    systemctl stop xroad-proxy xroad-proxy-ui-api xroad-confclient xroad-signer \
+      xroad-monitor xroad-addon-messagelog xroad-base xroad-opmonitor 2>/dev/null || true
+    dnf remove -y 'xroad-*' 2>/dev/null || true
+    if [ "$DB_MODE" == "externa" ]; then
+      warn "Base de datos externa: no se realiza DROP remoto. Si hace falta, limpiá manualmente las bases/usuarios en ${DB_HOST}."
+    else
+      sudo -u postgres psql -c "DROP DATABASE IF EXISTS serverconf;" 2>/dev/null || true
+      sudo -u postgres psql -c "DROP DATABASE IF EXISTS messagelog;" 2>/dev/null || true
+      sudo -u postgres psql -c "DROP DATABASE IF EXISTS \"op-monitor\";" 2>/dev/null || true
+      sudo -u postgres psql -c "DROP USER IF EXISTS serverconf;" 2>/dev/null || true
+      sudo -u postgres psql -c "DROP USER IF EXISTS serverconf_admin;" 2>/dev/null || true
+      sudo -u postgres psql -c "DROP USER IF EXISTS messagelog;" 2>/dev/null || true
+      sudo -u postgres psql -c "DROP USER IF EXISTS messagelog_admin;" 2>/dev/null || true
+      sudo -u postgres psql -c "DROP USER IF EXISTS opmonitor;" 2>/dev/null || true
+      sudo -u postgres psql -c "DROP USER IF EXISTS opmonitor_admin;" 2>/dev/null || true
+    fi
+    rm -f /etc/yum.repos.d/artifactory* /etc/yum.repos.d/epel.repo /etc/yum.repos.d/pgdg*
+    rm -rf /etc/xroad /var/lib/xroad /var/log/xroad /etc/xroad.properties
+    dnf clean all 2>/dev/null || true
+  fi
   warn "Rollback completado. El servidor quedó en el estado anterior."
   warn "Revisá el error de arriba, corregilo y volvé a ejecutar el script."
   exit 1
@@ -69,6 +84,33 @@ preguntar() {
   done
 }
 
+# =============================================================================
+# FUNCIÓN PARA PREGUNTAR UN VALOR SENSIBLE (oculto, con confirmación)
+# =============================================================================
+preguntar_secreta() {
+  local LABEL=$1
+  local VARNAME=$2
+  local VALOR=""
+  local VALOR2=""
+  while true; do
+    echo ""
+    read -s -p "  Ingrese $LABEL: " VALOR </dev/tty
+    echo ""
+    if [ -z "$VALOR" ]; then
+      warn "El campo no puede estar vacío."
+      continue
+    fi
+    read -s -p "  Confirme $LABEL: " VALOR2 </dev/tty
+    echo ""
+    if [ "$VALOR" == "$VALOR2" ]; then
+      eval "$VARNAME='$VALOR'"
+      break
+    else
+      warn "No coincide. Volviendo a ingresar $LABEL..."
+    fi
+  done
+}
+
 echo ""
 echo "=============================================="
 echo "  Instalación X-Road Security Server v7.3.2  "
@@ -83,6 +125,103 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # =============================================================================
+# 1.5 MODO DE INSTALACIÓN
+# =============================================================================
+echo ""
+echo "--- ¿Qué se va a instalar en este servidor? ---"
+echo "  [1] Security Server de X-Road"
+echo "  [2] Servidor de Base de Datos externa (PostgreSQL) para un Security Server"
+echo ""
+while true; do
+  read -p "  Opción (1/2): " MODO_OPT </dev/tty
+  case $MODO_OPT in
+    1) MODO="ss"; break ;;
+    2) MODO="db"; break ;;
+    *) warn "Opción inválida, ingrese 1 o 2." ;;
+  esac
+done
+
+# =============================================================================
+# MODO BASE DE DATOS — instala y prepara PostgreSQL para uso remoto
+# (sección 4.3 del manual: "Instalación PostgreSQL en VM RHEL 8")
+# =============================================================================
+if [ "$MODO" == "db" ]; then
+  echo ""
+  echo "=============================================="
+  echo "  Preparación de servidor PostgreSQL externo"
+  echo "=============================================="
+
+  if [ ! -f /etc/redhat-release ]; then
+    fail "Este script requiere Red Hat Enterprise Linux 8."
+  fi
+  RHEL_MAJOR=$(grep -oP '\d+' /etc/redhat-release | head -1)
+  if [ "$RHEL_MAJOR" != "8" ]; then
+    fail "Se requiere RHEL 8. Detectado: $(cat /etc/redhat-release)"
+  fi
+  ok "SO: $(cat /etc/redhat-release)"
+
+  echo ""
+  preguntar "IP o rango del Security Server que va a conectarse (ej: 10.20.2.6 o 10.20.2.0/24)" DB_ALLOWED_CIDR
+  preguntar_secreta "contraseña a definir para el superusuario postgres" DB_ROOT_PASS
+
+  echo ""
+  echo "--- Instalando PostgreSQL 13 ---"
+  dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+  dnf -qy module disable postgresql
+  dnf install -y postgresql13-server postgresql13-contrib
+  ok "PostgreSQL 13 instalado"
+
+  /usr/pgsql-13/bin/postgresql-13-setup initdb
+  systemctl enable postgresql-13
+  systemctl start postgresql-13
+  ok "PostgreSQL 13 inicializado y en ejecución"
+
+  PG_HBA="/var/lib/pgsql/13/data/pg_hba.conf"
+  PG_CONF="/var/lib/pgsql/13/data/postgresql.conf"
+
+  if ! grep -q "$DB_ALLOWED_CIDR" "$PG_HBA" 2>/dev/null; then
+    echo "host    all             all             ${DB_ALLOWED_CIDR}        md5" >> "$PG_HBA"
+  fi
+  ok "Acceso remoto habilitado en pg_hba.conf para ${DB_ALLOWED_CIDR}"
+
+  sed -i "s/^#*listen_addresses.*/listen_addresses = '*'/" "$PG_CONF"
+  ok "listen_addresses configurado en postgresql.conf"
+
+  systemctl restart postgresql-13
+  ok "PostgreSQL reiniciado"
+
+  sudo -u postgres psql -c "ALTER USER postgres PASSWORD '${DB_ROOT_PASS}';"
+  ok "Contraseña de superusuario postgres configurada"
+
+  if ! systemctl is-active firewalld &>/dev/null; then
+    dnf install -y firewalld
+    systemctl enable firewalld
+    systemctl start firewalld
+  fi
+  firewall-cmd --zone=public --add-port=5432/tcp --permanent 2>/dev/null
+  firewall-cmd --reload 2>/dev/null
+  ok "Puerto 5432/tcp habilitado en firewall"
+
+  IP_SERVIDOR=$(hostname -I | tr ' ' '\n' | grep -v '^127\.' | head -1)
+  echo ""
+  echo "=============================================="
+  echo -e "${GREEN}  Servidor de Base de Datos preparado${NC}"
+  echo "=============================================="
+  echo "  Host/IP         : $IP_SERVIDOR"
+  echo "  Puerto          : 5432"
+  echo "  Usuario         : postgres"
+  echo "  Acceso permitido: $DB_ALLOWED_CIDR"
+  echo ""
+  echo "  Usá estos datos al instalar el Security Server"
+  echo "  (opción 'Externa' de base de datos)."
+  echo "  Las bases serverconf/messagelog/opmonitor las crea"
+  echo "  automáticamente el instalador del Security Server"
+  echo "  al conectarse por primera vez."
+  echo "=============================================="
+  exit 0
+fi
+
+# =============================================================================
 # 2. DATOS DEL ORGANISMO
 # =============================================================================
 echo ""
@@ -92,24 +231,31 @@ echo ""
 
 while true; do
   echo "  Seleccione el ambiente:"
-  echo "  [1] HML - Homologación"
-  echo "  [2] PRD - Producción"
+  echo "  [1] QA"
+  echo "  [2] HML - Homologación"
+  echo "  [3] PRD - Producción"
   echo ""
-  read -p "  Opción (1/2): " OPT </dev/tty
+  read -p "  Opción (1/2/3): " OPT </dev/tty
   case $OPT in
     1)
+      AMBIENTE="qa"
+      AMBIENTE_LABEL="QA"
+      CENTRAL_SERVER="xroad-central-qa.gcba.gob.ar"
+      MSS_SERVER="xroad-mss-qa.gcba.gob.ar"
+      break ;;
+    2)
       AMBIENTE="hml"
       AMBIENTE_LABEL="HML - Homologación"
       CENTRAL_SERVER="xroad-central-hml.gcba.gob.ar"
       MSS_SERVER="xroad-mss-hml.gcba.gob.ar"
       break ;;
-    2)
+    3)
       AMBIENTE="prd"
       AMBIENTE_LABEL="PRD - Producción"
       CENTRAL_SERVER="xroad-central.buenosaires.gob.ar"
       MSS_SERVER="xroad-mss.buenosaires.gob.ar"
       break ;;
-    *) warn "Opción inválida, ingrese 1 o 2." ; echo "" ;;
+    *) warn "Opción inválida, ingrese 1, 2 o 3." ; echo "" ;;
   esac
 done
 read -p "  Confirme ambiente [$AMBIENTE_LABEL] (s/n): " CONFIRM </dev/tty
@@ -130,6 +276,36 @@ SERVER_CODE=$(echo "$SERVER_CODE" | tr '[:lower:]' '[:upper:]')
 ok "Server Code: $SERVER_CODE"
 
 echo ""
+echo "--- Base de datos ---"
+info "Ver sección 4.3 del manual si vas a usar un servidor PostgreSQL externo."
+echo ""
+while true; do
+  echo "  Seleccione el modo de base de datos:"
+  echo "  [1] Interna (la crea el instalador de X-Road, en esta misma VM)"
+  echo "  [2] Externa (servidor PostgreSQL ya preparado en otro host)"
+  echo ""
+  read -p "  Opción (1/2): " DB_OPT </dev/tty
+  case $DB_OPT in
+    1) DB_MODE="interna"; DB_MODE_LABEL="Interna"; break ;;
+    2) DB_MODE="externa"; DB_MODE_LABEL="Externa"; break ;;
+    *) warn "Opción inválida, ingrese 1 o 2." ; echo "" ;;
+  esac
+done
+
+if [ "$DB_MODE" == "externa" ]; then
+  preguntar "IP o host del servidor PostgreSQL externo" DB_HOST
+  preguntar "puerto de PostgreSQL" DB_PORT
+  preguntar "usuario superusuario de PostgreSQL (ej: postgres)" DB_SUPERUSER
+  preguntar_secreta "contraseña del superusuario de PostgreSQL" DB_SUPERUSER_PASS
+  DB_PREFIX=$(echo "$SERVER_CODE" | tr '[:upper:]' '[:lower:]')
+  info "Se usarán bases/esquemas/usuarios con el prefijo '$DB_PREFIX' (ej: serverconf_$DB_PREFIX)"
+  preguntar_secreta "contraseña para los usuarios de aplicación (serverconf_$DB_PREFIX, messagelog_$DB_PREFIX, opmonitor_$DB_PREFIX)" DB_APP_PASS
+  ok "Base de datos externa: $DB_HOST:$DB_PORT"
+else
+  ok "Base de datos interna"
+fi
+
+echo ""
 echo "=============================================="
 echo "  Resumen de configuración"
 echo "=============================================="
@@ -138,6 +314,10 @@ echo "  Central Server  : $CENTRAL_SERVER"
 echo "  Member Class    : $MEMBER_CLASS"
 echo "  Member Code     : $MEMBER_CODE"
 echo "  Server Code     : $SERVER_CODE"
+echo "  Base de datos   : $DB_MODE_LABEL"
+if [ "$DB_MODE" == "externa" ]; then
+echo "                    ($DB_HOST:$DB_PORT)"
+fi
 echo "=============================================="
 echo ""
 read -p "¿Los datos son correctos? ¿Desea continuar? (s/n): " CONFIRM </dev/tty
@@ -270,7 +450,57 @@ dnf makecache
 ok "Caché de repositorios actualizado"
 
 # =============================================================================
-# 8. INSTALACIÓN X-ROAD
+# 8. BASE DE DATOS EXTERNA (si corresponde)
+# =============================================================================
+if [ "$DB_MODE" == "externa" ]; then
+  echo ""
+  echo "--- Configurando conexión a base de datos externa ---"
+
+  dnf install -y xroad-database-remote
+  ok "xroad-database-remote instalado"
+
+  touch /etc/xroad.properties
+  chown root:root /etc/xroad.properties
+  chmod 600 /etc/xroad.properties
+  cat > /etc/xroad.properties << PROPS
+postgres.connection.password = ${DB_SUPERUSER_PASS}
+postgres.connection.user = ${DB_SUPERUSER}
+PROPS
+  ok "/etc/xroad.properties configurado"
+
+  mkdir -p /etc/xroad
+  touch /etc/xroad/db.properties
+  chmod 0640 /etc/xroad/db.properties
+  chown xroad:xroad /etc/xroad/db.properties 2>/dev/null || true
+
+  cat > /etc/xroad/db.properties << DBPROPS
+serverconf.hibernate.jdbc.use_streams_for_binary = true
+serverconf.hibernate.dialect = ee.ria.xroad.common.db.CustomPostgreSQLDialect
+serverconf.hibernate.connection.driver_class = org.postgresql.Driver
+serverconf.hibernate.connection.url = jdbc:postgresql://${DB_HOST}:${DB_PORT}/serverconf_${DB_PREFIX}
+serverconf.hibernate.hikari.dataSource.currentSchema = serverconf_${DB_PREFIX},public
+serverconf.hibernate.connection.username = serverconf_${DB_PREFIX}
+serverconf.hibernate.connection.password = ${DB_APP_PASS}
+
+messagelog.hibernate.jdbc.use_streams_for_binary = true
+messagelog.hibernate.connection.driver_class = org.postgresql.Driver
+messagelog.hibernate.connection.url = jdbc:postgresql://${DB_HOST}:${DB_PORT}/messagelog_${DB_PREFIX}
+messagelog.hibernate.hikari.dataSource.currentSchema = messagelog_${DB_PREFIX},public
+messagelog.hibernate.connection.username = messagelog_${DB_PREFIX}
+messagelog.hibernate.connection.password = ${DB_APP_PASS}
+
+op-monitor.hibernate.jdbc.use_streams_for_binary = true
+op-monitor.hibernate.connection.driver_class = org.postgresql.Driver
+op-monitor.hibernate.connection.url = jdbc:postgresql://${DB_HOST}:${DB_PORT}/opmonitor_${DB_PREFIX}
+op-monitor.hibernate.hikari.dataSource.currentSchema = opmonitor_${DB_PREFIX},public
+op-monitor.hibernate.connection.username = opmonitor_${DB_PREFIX}
+op-monitor.hibernate.connection.password = ${DB_APP_PASS}
+DBPROPS
+  ok "/etc/xroad/db.properties configurado (host: ${DB_HOST}:${DB_PORT})"
+fi
+
+# =============================================================================
+# 9. INSTALACIÓN X-ROAD
 # =============================================================================
 echo ""
 echo "--- Instalando X-Road Security Server ---"
@@ -278,7 +508,11 @@ echo "    (esto puede tardar varios minutos, se muestra el progreso)"
 echo ""
 
 dnf install -y xroad-securityserver
-ok "xroad-securityserver instalado (incluye base de datos interna)"
+if [ "$DB_MODE" == "externa" ]; then
+  ok "xroad-securityserver instalado (usando base de datos externa configurada en el paso anterior)"
+else
+  ok "xroad-securityserver instalado (incluye base de datos interna)"
+fi
 
 dnf install -y xroad-addon-opmonitoring
 ok "xroad-addon-opmonitoring instalado"
@@ -287,7 +521,7 @@ dnf install -y xroad-autologin
 ok "xroad-autologin instalado"
 
 # =============================================================================
-# 9. CREAR USUARIO ADMINISTRADOR
+# 10. CREAR USUARIO ADMINISTRADOR
 # =============================================================================
 echo ""
 echo "--- Creando usuario administrador de la plataforma ---"
@@ -305,7 +539,7 @@ done
 ok "Usuario $XROAD_USER creado con permisos de administración"
 
 # =============================================================================
-# 10. CONFIGURAR local.ini
+# 11. CONFIGURAR local.ini
 # =============================================================================
 echo ""
 echo "--- Aplicando configuración ---"
@@ -329,11 +563,13 @@ MEMBER_CODE=$MEMBER_CODE
 SERVER_CODE=$SERVER_CODE
 CENTRAL_SERVER=$CENTRAL_SERVER
 MSS_SERVER=$MSS_SERVER
+DB_MODE=$DB_MODE
+DB_HOST=$DB_HOST
 CONF
 ok "Datos del organismo guardados en /etc/xroad/organismo.conf"
 
 # =============================================================================
-# 11. FIREWALL
+# 12. FIREWALL
 # =============================================================================
 echo ""
 echo "--- Configurando firewall ---"
@@ -351,7 +587,7 @@ done
 firewall-cmd --reload 2>/dev/null
 
 # =============================================================================
-# 12. SERVICIOS
+# 13. SERVICIOS
 # =============================================================================
 echo ""
 echo "--- Iniciando servicios ---"
@@ -378,7 +614,7 @@ systemctl restart xroad-proxy-ui-api
 ok "xroad-proxy-ui-api reiniciado"
 
 # =============================================================================
-# 13. VERIFICACIÓN POST-INSTALACIÓN
+# 14. VERIFICACIÓN POST-INSTALACIÓN
 # Las verificaciones son informativas: no disparan rollback.
 # =============================================================================
 echo ""
@@ -434,6 +670,7 @@ echo "  Central Server  : $CENTRAL_SERVER"
 echo "  Member Class    : $MEMBER_CLASS"
 echo "  Member Code     : $MEMBER_CODE"
 echo "  Server Code     : $SERVER_CODE"
+echo "  Base de datos   : $DB_MODE_LABEL"
 echo "  URL de admin    : https://${IP_SERVIDOR}:4000"
 echo "  Usuario UI      : $XROAD_USER"
 echo ""
