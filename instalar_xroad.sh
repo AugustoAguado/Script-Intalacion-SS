@@ -408,17 +408,41 @@ fi
 ok "Disco: ${DISK_GB} GB libres"
 
 # La VM tiene que estar registrada ante Red Hat (subscription-manager) para
-# poder bajar paquetes de BaseOS/AppStream. Si el registro está roto (ej:
-# el consumer fue borrado del lado del servidor), dnf falla recién en medio
-# de la instalación con un 403 confuso y dispara el rollback. Se valida acá,
-# antes de tocar nada, con el mismo chequeo que dnf haría (dnf makecache).
+# poder bajar paquetes de BaseOS/AppStream. Si no lo está (o el registro
+# quedó roto, ej: un consumer huérfano o clonado), dnf falla recién en medio
+# de la instalación con un error confuso y dispara el rollback. Se valida
+# acá, antes de tocar nada, y si hace falta se registra en el momento en
+# vez de pedirle al operador que salga a correr comandos aparte.
+#
+# ¡Ojo! "dnf makecache" solo, por su cuenta, no alcanza como chequeo: si NO
+# hay NINGÚN repo habilitado (VM sin registrar), makecache igual "pasa" al
+# no tener nada que refrescar. Por eso también se confirma que BaseOS esté
+# realmente habilitado.
+verificar_baseos() {
+  dnf makecache &>/dev/null
+  dnf repolist enabled 2>/dev/null | grep -qi baseos
+}
+
+if ! verificar_baseos; then
+  warn "Esta VM no está registrada ante Red Hat (o el registro quedó roto)."
+  preguntar "usuario de tu cuenta de Red Hat (subscription-manager)" RH_USER
+  subscription-manager clean &>/dev/null || true
+  if ! subscription-manager register --username="$RH_USER" </dev/tty; then
+    fail "No se pudo registrar la VM ante Red Hat. Verificá el usuario/contraseña y volvé a ejecutar el script."
+  fi
+  ok "VM registrada ante Red Hat"
+fi
+
 DNF_CHECK_LOG=$(mktemp)
 if ! dnf makecache >"$DNF_CHECK_LOG" 2>&1; then
   cat "$DNF_CHECK_LOG"
   rm -f "$DNF_CHECK_LOG"
-  fail "No se pudieron descargar los repositorios de Red Hat. Registrá la VM antes de continuar: subscription-manager register --username=<tu-usuario-redhat> (confirmá después con: dnf makecache)"
+  fail "No se pudieron descargar los repositorios de Red Hat aun después de registrar. Revisá: subscription-manager status"
 fi
 rm -f "$DNF_CHECK_LOG"
+if ! dnf repolist enabled 2>/dev/null | grep -qi baseos; then
+  fail "El repositorio BaseOS de Red Hat no aparece habilitado. Revisá: subscription-manager repos --list-enabled"
+fi
 ok "Suscripción de Red Hat OK (repositorios accesibles)"
 
 # =============================================================================
