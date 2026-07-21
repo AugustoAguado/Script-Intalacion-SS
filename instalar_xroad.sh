@@ -28,15 +28,17 @@ rollback() {
   echo ""
   warn "Ocurrió un error durante la instalación. Ejecutando rollback..."
   if [ "$MODO" == "db" ]; then
-    systemctl stop postgresql-13 2>/dev/null || true
-    dnf remove -y 'postgresql13*' 2>/dev/null || true
+    for svc in $(systemctl list-units --type=service --all 'postgresql-*' --no-legend 2>/dev/null | awk '{print $1}'); do
+      systemctl stop "$svc" 2>/dev/null || true
+    done
+    dnf remove -y 'postgresql*' pgdg-redhat-repo 2>/dev/null || true
     rm -f /etc/yum.repos.d/pgdg*
-    rm -rf /var/lib/pgsql/13
+    rm -rf /var/lib/pgsql
     dnf clean all 2>/dev/null || true
   else
     systemctl stop xroad-proxy xroad-proxy-ui-api xroad-confclient xroad-signer \
       xroad-monitor xroad-addon-messagelog xroad-base xroad-opmonitor 2>/dev/null || true
-    dnf remove -y 'xroad-*' 2>/dev/null || true
+    dnf remove -y 'xroad-*' pgdg-redhat-repo 2>/dev/null || true
     if [ "$DB_MODE" == "externa" ]; then
       warn "Base de datos externa: no se realiza DROP remoto. Si hace falta, limpiá manualmente las bases/usuarios en ${DB_HOST}."
     else
@@ -52,6 +54,13 @@ rollback() {
     fi
     rm -f /etc/yum.repos.d/artifactory* /etc/yum.repos.d/epel.repo /etc/yum.repos.d/pgdg*
     rm -rf /etc/xroad /var/lib/xroad /var/log/xroad /etc/xroad.properties
+    # Los DROP DATABASE de arriba solo sirven si postgres estaba corriendo en
+    # ese momento. El directorio de datos sobrevive a la desinstalación del
+    # paquete, así que si no se limpia acá, la próxima instalación reutiliza
+    # datos viejos y las bases "ya existen" con permisos que no coinciden.
+    if [ "$DB_MODE" != "externa" ]; then
+      rm -rf /var/lib/pgsql
+    fi
     dnf clean all 2>/dev/null || true
   fi
   warn "Rollback completado. El servidor quedó en el estado anterior."
@@ -111,6 +120,20 @@ preguntar_secreta() {
   done
 }
 
+# =============================================================================
+# DIAGNÓSTICO — vuelca logs de postgres antes del rollback, para no perderlos
+# =============================================================================
+diagnosticar_postgres() {
+  local SERVICIO=$1
+  warn "PostgreSQL no pudo iniciar/reiniciar. Diagnóstico:"
+  echo "--- journalctl -u $SERVICIO ---"
+  journalctl -u "$SERVICIO" --no-pager -n 30 2>/dev/null
+  echo "--- log de PostgreSQL ---"
+  cat "/var/lib/pgsql/${PG_VERSION}/data/log/"*.log 2>/dev/null | tail -50
+  echo "--- posibles denegaciones de SELinux ---"
+  ausearch -m avc -ts recent 2>/dev/null | tail -20
+}
+
 echo ""
 echo "=============================================="
 echo "  Instalación X-Road Security Server v7.3.2  "
@@ -162,22 +185,51 @@ if [ "$MODO" == "db" ]; then
 
   echo ""
   preguntar "IP o rango del Security Server que va a conectarse (ej: 10.20.2.6 o 10.20.2.0/24)" DB_ALLOWED_CIDR
+  # pg_hba.conf no acepta una IP sin máscara: si no se puso "/", se asume /32
+  # (esa única IP). Sin esto, postgres lee el método (md5) como si fuera la
+  # máscara y ni siquiera arranca ("invalid IP mask").
+  if [[ "$DB_ALLOWED_CIDR" != */* ]]; then
+    DB_ALLOWED_CIDR="${DB_ALLOWED_CIDR}/32"
+    info "Se interpretó como $DB_ALLOWED_CIDR (una sola IP)"
+  fi
   preguntar_secreta "contraseña a definir para el superusuario postgres" DB_ROOT_PASS
 
   echo ""
-  echo "--- Instalando PostgreSQL 13 ---"
-  dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+  echo "--- Instalando PostgreSQL ---"
+  PGDG_RPM_URL="https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm"
+  dnf install -y "$PGDG_RPM_URL"
+  # Si el paquete ya figuraba instalado (ej: VM reciclada a mano, borrando
+  # el .repo con rm en vez de dnf) dnf no vuelve a escribirlo y el archivo
+  # de repos queda faltante aunque rpm lo crea presente. Se fuerza a que
+  # exista antes de seguir.
+  if [ ! -f /etc/yum.repos.d/pgdg-redhat-all.repo ]; then
+    dnf reinstall -y "$PGDG_RPM_URL"
+  fi
   dnf -qy module disable postgresql
-  dnf install -y postgresql13-server postgresql13-contrib
-  ok "PostgreSQL 13 instalado"
 
-  /usr/pgsql-13/bin/postgresql-13-setup initdb
-  systemctl enable postgresql-13
-  systemctl start postgresql-13
-  ok "PostgreSQL 13 inicializado y en ejecución"
+  # El manual pide "PostgreSQL 13+" como mínimo. En vez de fijar una versión
+  # (13 ya quedó EOL y el repo de PGDG dejó de publicarla, rompiendo el
+  # script), se detecta la más nueva que el repo tenga disponible.
+  PG_VERSION=$(dnf list available --refresh 'postgresql*-server' 2>/dev/null \
+    | grep -oP '^postgresql\K[0-9]+(?=-server)' | sort -n | tail -1)
+  if [ -z "$PG_VERSION" ]; then
+    fail "No se encontró ningún paquete postgresqlNN-server disponible en el repo de PGDG."
+  fi
+  ok "Versión de PostgreSQL detectada: $PG_VERSION"
 
-  PG_HBA="/var/lib/pgsql/13/data/pg_hba.conf"
-  PG_CONF="/var/lib/pgsql/13/data/postgresql.conf"
+  dnf install -y "postgresql${PG_VERSION}-server" "postgresql${PG_VERSION}-contrib"
+  ok "PostgreSQL $PG_VERSION instalado"
+
+  "/usr/pgsql-${PG_VERSION}/bin/postgresql-${PG_VERSION}-setup" initdb
+  systemctl enable "postgresql-${PG_VERSION}"
+  if ! systemctl start "postgresql-${PG_VERSION}"; then
+    diagnosticar_postgres "postgresql-${PG_VERSION}"
+    rollback
+  fi
+  ok "PostgreSQL $PG_VERSION inicializado y en ejecución"
+
+  PG_HBA="/var/lib/pgsql/${PG_VERSION}/data/pg_hba.conf"
+  PG_CONF="/var/lib/pgsql/${PG_VERSION}/data/postgresql.conf"
 
   if ! grep -q "$DB_ALLOWED_CIDR" "$PG_HBA" 2>/dev/null; then
     echo "host    all             all             ${DB_ALLOWED_CIDR}        md5" >> "$PG_HBA"
@@ -186,8 +238,12 @@ if [ "$MODO" == "db" ]; then
 
   sed -i "s/^#*listen_addresses.*/listen_addresses = '*'/" "$PG_CONF"
   ok "listen_addresses configurado en postgresql.conf"
+  restorecon -v "$PG_HBA" "$PG_CONF" 2>/dev/null || true
 
-  systemctl restart postgresql-13
+  if ! systemctl restart "postgresql-${PG_VERSION}"; then
+    diagnosticar_postgres "postgresql-${PG_VERSION}"
+    rollback
+  fi
   ok "PostgreSQL reiniciado"
 
   sudo -u postgres psql -c "ALTER USER postgres PASSWORD '${DB_ROOT_PASS}';"
@@ -202,7 +258,10 @@ if [ "$MODO" == "db" ]; then
   firewall-cmd --reload 2>/dev/null
   ok "Puerto 5432/tcp habilitado en firewall"
 
-  IP_SERVIDOR=$(hostname -I | tr ' ' '\n' | grep -v '^127\.' | head -1)
+  IP_SERVIDOR=$(hostname -I | tr ' ' '\n' | grep -v '^127\.' | grep -v '^10\.0\.2\.' | head -1)
+  if [ -z "$IP_SERVIDOR" ]; then
+    IP_SERVIDOR=$(hostname -I | awk '{print $1}')
+  fi
   echo ""
   echo "=============================================="
   echo -e "${GREEN}  Servidor de Base de Datos preparado${NC}"
@@ -217,6 +276,11 @@ if [ "$MODO" == "db" ]; then
   echo "  Las bases serverconf/messagelog/opmonitor las crea"
   echo "  automáticamente el instalador del Security Server"
   echo "  al conectarse por primera vez."
+  echo ""
+  echo "  Para probar la conexión ANTES de instalar el Security"
+  echo "  Server, corré esto desde esa otra VM (no desde acá):"
+  echo "    dnf install -y postgresql"
+  echo "    psql -h $IP_SERVIDOR -U postgres -p 5432 -c '\\conninfo'"
   echo "=============================================="
   exit 0
 fi
@@ -264,13 +328,6 @@ if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
 fi
 ok "Ambiente: $AMBIENTE_LABEL"
 
-preguntar "Member Class (dato provisto por X-BA, ej: GOB, JUS)" MEMBER_CLASS
-MEMBER_CLASS=$(echo "$MEMBER_CLASS" | tr '[:lower:]' '[:upper:]')
-ok "Member Class: $MEMBER_CLASS"
-
-preguntar "Member Code (dato provisto por X-BA, ej: 001)" MEMBER_CODE
-ok "Member Code: $MEMBER_CODE"
-
 preguntar "Server Code (dato provisto por X-BA, ej: PRD001JUS)" SERVER_CODE
 SERVER_CODE=$(echo "$SERVER_CODE" | tr '[:lower:]' '[:upper:]')
 ok "Server Code: $SERVER_CODE"
@@ -311,8 +368,6 @@ echo "  Resumen de configuración"
 echo "=============================================="
 echo "  Ambiente        : $AMBIENTE_LABEL"
 echo "  Central Server  : $CENTRAL_SERVER"
-echo "  Member Class    : $MEMBER_CLASS"
-echo "  Member Code     : $MEMBER_CODE"
 echo "  Server Code     : $SERVER_CODE"
 echo "  Base de datos   : $DB_MODE_LABEL"
 if [ "$DB_MODE" == "externa" ]; then
@@ -351,6 +406,20 @@ if [ "$DISK_GB" -lt 5 ]; then
   fail "Espacio insuficiente: ${DISK_GB} GB libres. Se requieren al menos 60 GB."
 fi
 ok "Disco: ${DISK_GB} GB libres"
+
+# La VM tiene que estar registrada ante Red Hat (subscription-manager) para
+# poder bajar paquetes de BaseOS/AppStream. Si el registro está roto (ej:
+# el consumer fue borrado del lado del servidor), dnf falla recién en medio
+# de la instalación con un 403 confuso y dispara el rollback. Se valida acá,
+# antes de tocar nada, con el mismo chequeo que dnf haría (dnf makecache).
+DNF_CHECK_LOG=$(mktemp)
+if ! dnf makecache >"$DNF_CHECK_LOG" 2>&1; then
+  cat "$DNF_CHECK_LOG"
+  rm -f "$DNF_CHECK_LOG"
+  fail "No se pudieron descargar los repositorios de Red Hat. Registrá la VM antes de continuar: subscription-manager register --username=<tu-usuario-redhat> (confirmá después con: dnf makecache)"
+fi
+rm -f "$DNF_CHECK_LOG"
+ok "Suscripción de Red Hat OK (repositorios accesibles)"
 
 # =============================================================================
 # 4. VERIFICACIONES DE CONECTIVIDAD
@@ -400,19 +469,6 @@ export LC_ALL=en_US.UTF-8
 ok "Locale configurado (LC_ALL=en_US.UTF-8)"
 
 RHEL_MAJOR_VERSION=$(source /etc/os-release; echo ${VERSION_ID%.*})
-
-# CodeReady Builder — necesario para algunas dependencias de EPEL.
-# En RHEL con suscripción hay que habilitarlo, pero si el sistema está
-# registrado sin entitlement válido queda "habilitado" y da 403 al bajar
-# metadata — y como ese estado lo guarda subscription-manager, persiste
-# entre corridas del script y rompe CUALQUIER dnf posterior (incluso el de
-# yum-utils de acá abajo). Por eso se valida antes del primer dnf install.
-CRB_REPO="codeready-builder-for-rhel-${RHEL_MAJOR_VERSION}-x86_64-rpms"
-subscription-manager repos --enable "$CRB_REPO" 2>/dev/null || true
-if ! dnf makecache --disablerepo='*' --enablerepo="$CRB_REPO" 2>/dev/null; then
-  warn "CodeReady Builder no está disponible (sin entitlement válido). Se continúa sin él."
-  subscription-manager repos --disable "$CRB_REPO" 2>/dev/null || true
-fi
 
 dnf install -y yum-utils nc
 ok "yum-utils instalado"
@@ -570,8 +626,6 @@ ok "local.ini configurado (puertos 80/443)"
 
 cat > /etc/xroad/organismo.conf << CONF
 AMBIENTE=$AMBIENTE
-MEMBER_CLASS=$MEMBER_CLASS
-MEMBER_CODE=$MEMBER_CODE
 SERVER_CODE=$SERVER_CODE
 CENTRAL_SERVER=$CENTRAL_SERVER
 MSS_SERVER=$MSS_SERVER
@@ -679,8 +733,6 @@ echo "  Hostname        : $(hostname)"
 echo "  IP              : $IP_SERVIDOR"
 echo "  Ambiente        : $AMBIENTE_LABEL"
 echo "  Central Server  : $CENTRAL_SERVER"
-echo "  Member Class    : $MEMBER_CLASS"
-echo "  Member Code     : $MEMBER_CODE"
 echo "  Server Code     : $SERVER_CODE"
 echo "  Base de datos   : $DB_MODE_LABEL"
 echo "  URL de admin    : https://${IP_SERVIDOR}:4000"
@@ -703,8 +755,7 @@ echo "  8. Activar los certificados y hacer Register del AUTH"
 echo "     con la IP o DNS de este Security Server"
 echo "  9. Configurar Timestamping: Settings → System Parameters"
 echo "     Seleccionar *.buenosaires.gob.ar"
-echo " 10. Esperar la aprobación del Management Request en el"
-echo "     Central Server (aprox. 5 min si es automática)"
+echo " 10. Esperar la aprobación del Management Request en el Central Server"
 echo ""
 echo "  *** Enviá el contenido completo de esta pantalla"
 echo "  *** al equipo de X-BA para validar la instalación."
